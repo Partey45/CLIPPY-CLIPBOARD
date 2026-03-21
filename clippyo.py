@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QSystemTrayI
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QUrl, QThread, Qt, QTimer, QPoint, QRectF
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QBrush, QPen, QRadialGradient, QLinearGradient, QCursor, QPainterPath, QRegion
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QBrush, QPen, QRadialGradient, QLinearGradient, QCursor
 
 try:
     import pyperclip; CLIPBOARD_OK = True
@@ -852,7 +852,6 @@ class ClippyWindow(QMainWindow):
         W, H = 640, 460
         self.resize(W, H)
         self.setMinimumSize(500, 380)
-        self._corner_radius = 18
 
         self._icon = make_icon(64)
         self.setWindowIcon(self._icon)
@@ -949,16 +948,28 @@ class ClippyWindow(QMainWindow):
         self._watchdog.setInterval(10_000)
         self._watchdog.timeout.connect(self._watchdog_check)
         self._watchdog.start()
-        QTimer.singleShot(0, self._apply_rounded_mask)
+        QTimer.singleShot(0, self._set_native_rounded_corners)
 
-    def _apply_rounded_mask(self):
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(self.rect()), self._corner_radius, self._corner_radius)
-        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+    def _set_native_rounded_corners(self):
+        """Request smooth native rounded corners on Windows 11."""
+        try:
+            import ctypes
+            DWMWA_WINDOW_CORNER_PREFERENCE = 33
+            DWMWCP_ROUND = 2
+            value = ctypes.c_int(DWMWCP_ROUND)
+            hwnd = int(self.winId())
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                ctypes.byref(value),
+                ctypes.sizeof(value),
+            )
+        except Exception:
+            pass
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._apply_rounded_mask()
+        self._set_native_rounded_corners()
 
     def _show_window(self, cx=-1, cy=-1):
         """cx, cy: caret screen coords from the destination app (-1,-1 = unknown)."""
@@ -1041,10 +1052,12 @@ class ClippyWindow(QMainWindow):
 
         # Focus search bar immediately and reset keyboard nav state.
         QTimer.singleShot(120, lambda: self.web.page().runJavaScript("""
-            kbIdx = -1;
+            kbIdx = 0;
+            topNavIdx = -1;
+            _topNavItems().forEach(el => el.classList.remove('nav-focus'));
             renderAll();
             var s = document.getElementById('search');
-            if (s) { s.value = ''; s.focus(); }
+            if (s) { s.blur(); }
         """))
 
         # Release the showing guard after 1.5 s — slightly longer than before
@@ -1267,7 +1280,7 @@ body.dark,body.night{
 body.daylight{
   --appBg:linear-gradient(135deg,#e9f3ff 0%,#f6f2ff 58%,#f2fff7 100%);
   --navBg:rgba(255,255,255,.58);--navBorder:rgba(185,197,226,.72);
-  --panelBg:rgba(255,255,255,.75);--panelBorder:rgba(185,197,226,.72);
+  --panelBg:#f7fbff;--panelBorder:rgba(185,197,226,.92);
   --rowBg:rgba(255,255,255,.50);--rowBorder:rgba(194,206,234,.92);
   --cardBg:rgba(255,255,255,.82);--cardBorder:rgba(206,219,245,.95);
   --text:#2f3252;--textDim:#677391;--textMuted:#8e99b1;
@@ -1341,6 +1354,10 @@ body.daylight::after{
 }
 .btn-gear svg{stroke:var(--gearStroke);stroke-width:2.3;transition:stroke .3s;}
 .btn-gear.active,.btn-gear:hover{background:rgba(123,87,255,.16);border-color:rgba(123,87,255,.42);box-shadow:0 0 0 3px rgba(123,87,255,.14);}
+.btn-new.nav-focus,.btn-gear.nav-focus,#search.nav-focus{
+  box-shadow:0 0 0 3px rgba(123,87,255,.22)!important;
+  border-color:rgba(123,87,255,.46)!important;
+}
 
 /* ── MAIN ── */
 /* scroll-wrap fills remaining height below nav — rows scroll inside here */
@@ -1375,7 +1392,7 @@ body.daylight::after{
   border-radius:18px;padding:8px 10px;
   display:flex;flex-direction:row;flex-wrap:nowrap;gap:8px;align-items:stretch;
   overflow:hidden;
-  transition:border-color .25s,background .25s,box-shadow .2s;
+  transition:border-color .14s,background .14s,box-shadow .12s;
   backdrop-filter:blur(8px);
   box-shadow:0 7px 22px rgba(125,140,185,.14);
 }
@@ -1395,7 +1412,7 @@ body.daylight::after{
   flex:1 1 0;min-width:0;max-width:none;aspect-ratio:auto;height:100%;position:relative;
   background:var(--cardBg);border:1px solid var(--cardBorder);border-radius:11px;
   padding:9px 10px 7px;display:flex;flex-direction:column;justify-content:space-between;
-  overflow:hidden;transition:all .16s;cursor:pointer;
+  overflow:hidden;transition:all .08s linear;cursor:pointer;
 }
 .card:hover{
   border-color:rgba(123,87,255,.55);background:rgba(123,87,255,.10);
@@ -1418,8 +1435,8 @@ body.daylight::after{
 .card-text{flex:1;overflow:hidden;font-size:12px;line-height:1.48;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;}
 .card-text.empty-slot{color:var(--textMuted);font-style:italic;font-size:11px;}
 .card-text.code-font{font-family:'Cascadia Code','Cascadia Mono',Consolas,'Courier New',monospace;font-size:10.5px;}
-.card-actions{display:flex;gap:5px;justify-content:flex-end;padding-top:3px;flex-shrink:0;opacity:.08;transition:opacity .16s;pointer-events:auto;}
-.card:hover .card-actions,.card.editing .card-actions,.card.kb-focus .card-actions,.card.active-slot .card-actions{opacity:1;pointer-events:auto;}
+.card-actions{display:flex;gap:5px;justify-content:flex-end;padding-top:3px;flex-shrink:0;opacity:0;transition:opacity .08s linear;pointer-events:none;}
+.card:hover .card-actions,.card.editing .card-actions,.card.kb-focus .card-actions,.card.active-slot .card-actions,.card.user-target .card-actions{opacity:1;pointer-events:auto;}
 .card-textarea{width:100%;height:100%;background:transparent;border:none;color:var(--text);font-size:12px;line-height:1.48;padding:0;outline:none;resize:none;font-family:'Cascadia Code','Cascadia Mono',Consolas,'Courier New',monospace;}
 mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;}
 
@@ -1427,7 +1444,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .cbtn{
   width:22px;height:22px;border-radius:6px;padding:0;flex-shrink:0;
   cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:9px;
-  transition:all .12s;background:rgba(255,255,255,.62);border:1px solid rgba(178,193,225,.9);color:#566387;
+  transition:all .08s linear;background:rgba(255,255,255,.62);border:1px solid rgba(178,193,225,.9);color:#566387;
 }
 .cbtn:hover{background:rgba(255,255,255,.92);border-color:rgba(123,87,255,.36);color:#3f4b72;}
 .cbtn.active{background:rgba(109,40,217,.25);border-color:rgba(139,92,246,.5);color:#a78bfa;}
@@ -1445,8 +1462,8 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .card-add:hover{background:rgba(123,87,255,.11);border-color:rgba(123,87,255,.5);}
 
 /* ── SETTINGS ── */
-#settings{position:fixed;top:0;right:0;bottom:0;width:280px;background:var(--panelBg);border-left:1px solid var(--panelBorder);z-index:500;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.3);animation:slideIn .2s ease;}
-#settings-backdrop{position:fixed;inset:0;z-index:499;}
+#settings{position:fixed;top:0;right:0;bottom:0;width:280px;background:var(--panelBg);border-left:1px solid var(--panelBorder);z-index:500;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.3);animation:slideIn .14s ease;backdrop-filter:none;}
+#settings-backdrop{position:fixed;inset:0;z-index:499;background:rgba(10,15,30,.14);}
 .settings-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid var(--navBorder);}
 .settings-title{font-size:14px;font-weight:700;}
 .settings-close{background:none;border:none;color:var(--textMuted);cursor:pointer;font-size:17px;line-height:1;}
@@ -1544,11 +1561,11 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
     <div class="settings-section">
       <div class="s-title">Theme</div>
       <div class="theme-grid">
-        <button class="theme-btn active" id="theme-night" onclick="setTheme('night')">
+        <button class="theme-btn" id="theme-night" onclick="setTheme('night')">
           <div class="theme-swatch" style="background:linear-gradient(135deg,#0d0f1e,#1e1b4b)"></div>
           <span class="theme-label">Night</span>
         </button>
-        <button class="theme-btn" id="theme-daylight" onclick="setTheme('daylight')">
+        <button class="theme-btn active" id="theme-daylight" onclick="setTheme('daylight')">
           <div class="theme-swatch" style="background:linear-gradient(135deg,#f4f2ff,#ede9fe)"></div>
           <span class="theme-label">Daylight</span>
         </button>
@@ -1608,6 +1625,7 @@ let editingId = null, kbIdx = -1, searchTerm = '';
 let settingsOpen = false, dragCard = null, dragRow = null;
 let userTargetId = null;
 let settingsNavIdx = -1;
+let topNavIdx = -1;
 
 const TAG_CYCLE = [
   {dot:"#8b5cf6",border:"rgba(139,92,246,.42)"},
@@ -1718,9 +1736,10 @@ function showToast(msg, type='ok') {
 let _currentTheme = 'daylight';
 function _applyThemeUI(t) {
   if (t === 'dark') t = 'night'; // Backward compatibility with older saved theme values.
-  if (!t || t === _currentTheme) return;  // nothing to do
+  if (!t) return;
+  const changed = t !== _currentTheme;
   _currentTheme = t;
-  document.body.className = t;
+  if (changed) document.body.className = t;
   document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('theme-' + t);
   if (btn) btn.classList.add('active');
@@ -1983,6 +2002,25 @@ function _focusSettingsItem(idx) {
   el.scrollIntoView({block:'nearest', inline:'nearest', behavior:'smooth'});
 }
 
+function _topNavItems() {
+  return [
+    document.getElementById('search'),
+    document.querySelector('.btn-new'),
+    document.getElementById('gear-btn'),
+  ].filter(Boolean);
+}
+
+function _focusTopNav(idx) {
+  const items = _topNavItems();
+  if (!items.length) return;
+  const n = items.length;
+  topNavIdx = ((idx % n) + n) % n;
+  items.forEach(el => el.classList.remove('nav-focus'));
+  const el = items[topNavIdx];
+  el.classList.add('nav-focus');
+  if (typeof el.focus === 'function') el.focus({preventScroll:true});
+}
+
 function _handleSettingsKeys(e) {
   if (!settingsOpen) return false;
   const key = e.key;
@@ -2033,12 +2071,26 @@ function _handleSettingsKeys(e) {
 document.addEventListener('keydown', e => {
   if (_handleSettingsKeys(e)) return;
 
+  const isArrow = ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(e.key);
+  if (topNavIdx >= 0 && isArrow) {
+    e.preventDefault();
+    if (e.key === 'ArrowLeft') { _focusTopNav(topNavIdx - 1); return; }
+    if (e.key === 'ArrowRight') { _focusTopNav(topNavIdx + 1); return; }
+    if (e.key === 'ArrowDown') {
+      topNavIdx = -1;
+      _topNavItems().forEach(el => el.classList.remove('nav-focus'));
+      kbIdx = 0;
+      renderAll();
+      return;
+    }
+  }
+
   // Ctrl+D: arm nav, focus search so user can type immediately
   if ((e.ctrlKey||e.metaKey) && e.key==='d') {
     e.preventDefault();
-    if (kbIdx===-1) kbIdx=0;
-    const s=document.getElementById('search');
-    if(s){s.focus();s.select();}
+    topNavIdx = -1;
+    _topNavItems().forEach(el => el.classList.remove('nav-focus'));
+    kbIdx = 0;
     renderAll(); return;
   }
 
@@ -2059,7 +2111,6 @@ document.addEventListener('keydown', e => {
   // Arrow keys: if kbIdx is -1 (no card highlighted yet), auto-arm to card 0
   // so the first arrow press immediately highlights the first card rather than
   // doing nothing. This makes navigation available without any prior Ctrl+D.
-  const isArrow = ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(e.key);
   if (isArrow && kbIdx===-1) {
     kbIdx = 0;
   }
@@ -2109,6 +2160,12 @@ document.addEventListener('keydown', e => {
     scrollKbTarget('nearest');
   } else if (e.key==='ArrowUp') {
     e.preventDefault();
+    if (kbIdx <= 0) {
+      kbIdx = -1;
+      renderAll();
+      _focusTopNav(0);
+      return;
+    }
     // Jump to first card of the previous row
     const curRowId = flat[kbIdx]?.rowId;
     const prevFlat = flat.slice(0, kbIdx).reverse();
