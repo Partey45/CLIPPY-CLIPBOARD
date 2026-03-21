@@ -1724,7 +1724,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
     <div class="settings-section">
       <div class="s-title">Hotkey</div>
       <div class="hotkey-row">
-        <input id="hotkey-input" class="hotkey-input" value="Ctrl + D" placeholder="Press your keys" onkeydown="onHotkeyInputKey(event)" oninput="this.dataset.value=''" />
+        <input id="hotkey-input" class="hotkey-input" value="Ctrl + D" placeholder="Press your keys" tabindex="-1" onmousedown="onHotkeyInputMouseDown(event)" onkeydown="onHotkeyInputKey(event)" onblur="hotkeyCaptureArmed=false" oninput="this.dataset.value=''" />
         <button class="action-btn hotkey-save" id="hotkey-save" onclick="saveHotkey()">Save</button>
       </div>
       <div class="hotkey-note">Default: Ctrl + D</div>
@@ -1781,6 +1781,7 @@ let bridge = null;
 let rows = [], cursor = {row_idx:0,entry_idx:0};
 let autoCapture = true, history = [], histEnabled = true;
 let hotkey = 'ctrl+d';
+let hotkeyCaptureArmed = false;
 let editingId = null, kbIdx = -1, searchTerm = '';
 let settingsOpen = false, dragCard = null, dragRow = null;
 let userTargetId = null;
@@ -2153,7 +2154,6 @@ function _settingsNavItems() {
   return Array.from(document.querySelectorAll(
     '#settings .settings-close, ' +
     '#settings .theme-btn, ' +
-    '#settings #hotkey-input, ' +
     '#settings #hotkey-save, ' +
     '#settings #hotkey-reset, ' +
     '#settings #auto-toggle, ' +
@@ -2448,6 +2448,9 @@ function comboFromEvent(e){
   return normalizeHotkeyInput([...mods,key].join('+'));
 }
 function onHotkeyInputKey(e){
+  if(!hotkeyCaptureArmed){
+    return;
+  }
   if(e.key==='Tab') return;
   e.preventDefault();
   const combo=comboFromEvent(e);
@@ -2455,6 +2458,10 @@ function onHotkeyInputKey(e){
   const i=document.getElementById('hotkey-input');
   i.dataset.value=combo;
   i.value=formatHotkey(combo);
+}
+function onHotkeyInputMouseDown(e){
+  // Only a left mouse click can arm hotkey capture.
+  hotkeyCaptureArmed = e.button === 0;
 }
 function saveHotkey(){
   const i=document.getElementById('hotkey-input');
