@@ -96,9 +96,9 @@ log.info("Clippy starting — log file: %s", LOG_FILE)
 # ══════════════════════════════════════════════════════════════════════════════
 def _ensure_startup():
     """
-    Register the lightweight clippy_launcher.py (not clippy.py itself) to run
+    Register the lightweight clippy_launcher.py (not clippyo.py itself) to run
     at login.  The launcher starts in <1 second, shows the tray balloon
-    immediately, then launches clippy.py as a detached background subprocess.
+    immediately, then launches clippyo.py as a detached background subprocess.
     This gives users a <3 second notification even on cold boot.
 
     Use the HKCU Run key so Clippy launches as soon as the user signs in

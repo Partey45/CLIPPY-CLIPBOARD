@@ -4,7 +4,7 @@ clippy_launcher.py — instant startup shim for Clippy.
 This script is what the Startup folder / registry run-key launches.
 It has NO heavy imports (no Qt, no Chromium, no PyQt6).
 It boots in under 1 second, shows a Windows balloon immediately,
-then starts clippy.py as a detached background subprocess.
+then starts clippyo.py as a detached background subprocess.
 """
 
 import sys, os, subprocess, time, ctypes, ctypes.wintypes, threading
@@ -67,7 +67,7 @@ if __name__ == "__main__":
 
     # Find the main Clippy script in the app folder.
     clippy_main = None
-    for name in ("clippyo.py", "clippy.py", "clippysrc.py", "clippy_main.py"):
+    for name in ("clippyo.py", "clippysrc.py", "clippy_main.py"):
         candidate = script_dir / name
         if candidate.exists():
             clippy_main = candidate

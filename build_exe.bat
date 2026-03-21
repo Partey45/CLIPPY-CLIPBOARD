@@ -96,7 +96,7 @@ echo.
   --collect-all "PyQt6" ^
   --collect-all "PyQt6-WebEngine" ^
   --collect-data "PyQt6" ^
-  clippy.py
+  clippyo.py
 
 echo.
 
@@ -146,7 +146,7 @@ if exist "dist\Clippy\Clippy.exe" (
     echo  Try:
     echo    1. Right-click this .bat and Run as Administrator
     echo    2. Disable antivirus temporarily
-    echo    3. Make sure clippy.py is in this same folder
+    echo    3. Make sure clippyo.py is in this same folder
 )
 
 pause
