@@ -585,7 +585,7 @@ class ClipboardPoller(QThread):
                     if state["history_enabled"]:
                         h = [t for t in state["history"] if t != text]
                         h.insert(0, text)
-                        state["history"] = h[:10]
+                        state["history"] = h[:5]
 
                     rows = state["rows"]
                     c    = state["cursor"]
@@ -1399,7 +1399,7 @@ body.daylight::after{
 .row-accent{width:3px;align-self:stretch;border-radius:3px;flex-shrink:0;opacity:.8;}
 .row-group{
   flex:1;position:relative;background:var(--rowBg);border:1px solid var(--rowBorder);
-  border-radius:18px;padding:8px 10px;
+  border-radius:18px;padding:8px 38px 8px 10px;
   display:flex;flex-direction:row;flex-wrap:nowrap;gap:8px;align-items:stretch;
   overflow:hidden;
   transition:border-color .14s,background .14s,box-shadow .12s;
@@ -1412,7 +1412,7 @@ body.daylight::after{
   position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:50%;
   background:rgba(255,255,255,.9);border:1px solid rgba(198,208,232,.95);
   color:#5d6786;cursor:pointer;display:flex;align-items:center;justify-content:center;
-  z-index:3;font-size:17px;font-weight:700;line-height:1;transition:all .15s;
+  z-index:12;font-size:17px;font-weight:700;line-height:1;transition:all .15s;
   box-shadow:0 4px 10px rgba(109,122,156,.2);
 }
 .row-del:hover{background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.4);color:#c33232;}
@@ -1421,7 +1421,7 @@ body.daylight::after{
 .card{
   flex:1 1 0;min-width:0;max-width:none;aspect-ratio:auto;height:100%;position:relative;
   background:var(--cardBg);border:1px solid var(--cardBorder);border-radius:11px;
-  padding:9px 10px 7px;display:flex;flex-direction:column;justify-content:space-between;
+  padding:9px 10px 34px;display:flex;flex-direction:column;justify-content:space-between;
   overflow:hidden;transition:all .08s linear;cursor:pointer;
 }
 .card:hover{
@@ -1445,8 +1445,15 @@ body.daylight::after{
 .card-text{flex:1;overflow:hidden;font-size:17px;line-height:1.42;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;}
 .card-text.empty-slot{color:var(--textMuted);font-style:italic;font-size:15px;}
 .card-text.code-font{font-family:'Cascadia Code','Cascadia Mono',Consolas,'Courier New',monospace;font-size:15px;}
-.card-actions{display:flex;gap:5px;justify-content:flex-end;padding-top:3px;flex-shrink:0;opacity:0;transition:opacity .05s linear;pointer-events:none;}
-.card:hover .card-actions,.card:focus-within .card-actions,.card.editing .card-actions{opacity:1;pointer-events:auto;}
+.card-actions{
+  display:flex;gap:5px;justify-content:flex-end;flex-shrink:0;
+  position:absolute;right:6px;bottom:6px;z-index:6;
+  background:rgba(255,255,255,.92);border:1px solid rgba(180,194,224,.92);border-radius:8px;padding:2px;
+  opacity:0;transform:translateY(3px);transition:opacity .05s linear,transform .05s linear;pointer-events:none;
+}
+.card:hover .card-actions,.card.editing .card-actions{
+  opacity:1;transform:translateY(0);pointer-events:auto;
+}
 .card-textarea{width:100%;height:100%;background:transparent;border:none;color:var(--text);font-size:17px;line-height:1.42;padding:0;outline:none;resize:none;font-family:'Cascadia Code','Cascadia Mono',Consolas,'Courier New',monospace;}
 mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;}
 
@@ -1597,7 +1604,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
       <div class="toggle-row">
         <div class="toggle-info">
           <div class="toggle-label">Record history</div>
-          <div class="toggle-sub">Save last 10 captured items</div>
+          <div class="toggle-sub">Save last 5 captured items</div>
         </div>
         <div class="toggle-switch on" id="hist-toggle" tabindex="0" onclick="toggleHistory()">
           <div class="toggle-thumb"></div>
@@ -1663,10 +1670,10 @@ window.addEventListener('mouseleave', function(){ window.__clippyPointerInside =
 window.addEventListener('blur', function() {
   setTimeout(function() {
     const sinceShow = Date.now() - (window.__clippyLastShowTs || 0);
-    if (!document.hasFocus() && !window.__clippyPointerInside && !settingsOpen && sinceShow > 6000 && bridge) {
+    if (!document.hasFocus() && !window.__clippyPointerInside && !settingsOpen && sinceShow > 1700 && bridge) {
       bridge.hideWindow();
     }
-  }, 2200);
+  }, 500);
 });
 
 // Real __onState — replaces the early stub set in <head>.
