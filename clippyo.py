@@ -29,6 +29,7 @@ except ImportError:
     HAS_KEYBOARD = False
 
 DATA_FILE  = Path(__file__).parent / "clippy_data.json"
+DEFAULT_HOTKEY = "ctrl+d"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LOGGING — rotating crash + event log written next to the script
@@ -160,7 +161,29 @@ state = {
     "history": [],
     "history_enabled": True,
     "theme": "daylight",
+    "hotkey": DEFAULT_HOTKEY,
 }
+
+def _normalize_hotkey(combo: str) -> str:
+    parts = [p.strip().lower() for p in combo.split("+") if p.strip()]
+    if not parts:
+        return ""
+    norm = []
+    for p in parts:
+        if p in ("win", "cmd", "meta"):
+            p = "windows"
+        if p not in norm:
+            norm.append(p)
+    return "+".join(norm)
+
+def _valid_hotkey(combo: str) -> bool:
+    parts = [p for p in combo.split("+") if p]
+    if len(parts) < 2 or len(parts) > 4:
+        return False
+    mods = {"ctrl", "alt", "shift", "windows"}
+    has_mod = any(p in mods for p in parts)
+    has_trigger = any(p not in mods for p in parts)
+    return has_mod and has_trigger
 
 def load():
     if DATA_FILE.exists():
@@ -169,6 +192,7 @@ def load():
             state["rows"] = d.get("rows", [])
             state["history_enabled"] = d.get("history_enabled", True)
             state["theme"] = d.get("theme", "daylight")
+            state["hotkey"] = _normalize_hotkey(d.get("hotkey", DEFAULT_HOTKEY)) or DEFAULT_HOTKEY
             log.info("State loaded from %s (%d rows, theme=%s)",
                      DATA_FILE, len(state["rows"]), state["theme"])
             return
@@ -186,6 +210,7 @@ def save():
             "rows": state["rows"],
             "history_enabled": state["history_enabled"],
             "theme": state.get("theme", "dark"),
+            "hotkey": state.get("hotkey", DEFAULT_HOTKEY),
         }, ensure_ascii=False, indent=2), "utf-8")
     except Exception as exc:
         _log_exc("save()", exc)
@@ -253,6 +278,7 @@ class Bridge(QObject):
                 "history":    state["history"],
                 "hist_enabled": state["history_enabled"],
                 "theme":      state.get("theme", "dark"),
+                "hotkey":     state.get("hotkey", DEFAULT_HOTKEY),
             }
         if extra: payload.update(extra)
         self.stateChanged.emit(json.dumps(payload))
@@ -268,6 +294,7 @@ class Bridge(QObject):
                 "hist_enabled": state["history_enabled"],
                 "clip_ok":    CLIPBOARD_OK,
                 "theme":      state.get("theme", "dark"),
+                "hotkey":     state.get("hotkey", DEFAULT_HOTKEY),
             })
 
     # ── Copy entry to clipboard ───────────────────────────────────────────────
@@ -442,6 +469,31 @@ class Bridge(QObject):
             state["theme"] = theme
         save()
         log.info("Theme changed to %r", theme)
+
+    @pyqtSlot(str, result=str)
+    def setHotkey(self, hotkey):
+        combo = _normalize_hotkey(hotkey)
+        if not _valid_hotkey(combo):
+            return json.dumps({
+                "ok": False,
+                "error": "Use a valid combo like Ctrl+Alt+H",
+            })
+
+        win = _win_ref[0]
+        if win is None:
+            return json.dumps({"ok": False, "error": "Window is not ready yet"})
+        ok, err = win.register_hotkey(combo)
+        if not ok:
+            return json.dumps({
+                "ok": False,
+                "error": f"Windows rejected that hotkey: {err}",
+            })
+
+        with _state_lock:
+            state["hotkey"] = combo
+        save()
+        self._push({"toast": f"Hotkey set to {combo.upper()}"})
+        return json.dumps({"ok": True, "hotkey": combo})
 
     @pyqtSlot()
     def exportJSON(self):
@@ -925,6 +977,18 @@ class ClippyWindow(QMainWindow):
                 self.showRequested.emit(x, y)
             kb_lib.add_hotkey("ctrl+d", _on_hotkey, suppress=True)
             log.info("Hotkey Ctrl+D registered")
+        self._custom_hotkey_handle = None
+        self._custom_hotkey_combo = ""
+        if HAS_KEYBOARD:
+            with _state_lock:
+                saved_hotkey = state.get("hotkey", DEFAULT_HOTKEY)
+            if saved_hotkey and saved_hotkey != DEFAULT_HOTKEY:
+                ok, err = self.register_hotkey(saved_hotkey)
+                if not ok:
+                    with _state_lock:
+                        state["hotkey"] = DEFAULT_HOTKEY
+                    save()
+                    log.warning("Saved custom hotkey rejected (%s). Reverted to %s.", err, DEFAULT_HOTKEY)
 
         # ── Step 3: WebEngine + Bridge — heavy init ───────────────────────────
         self.web = QWebEngineView()
@@ -980,6 +1044,44 @@ class ClippyWindow(QMainWindow):
             )
         except Exception:
             pass
+
+    def _on_custom_hotkey(self):
+        try:
+            import ctypes
+            ctypes.windll.user32.AllowSetForegroundWindow(0xFFFFFFFF)
+        except Exception:
+            pass
+        pos = _get_caret_position()
+        x, y = pos if pos else (-1, -1)
+        self.showRequested.emit(x, y)
+
+    def register_hotkey(self, combo: str):
+        if not HAS_KEYBOARD:
+            return False, "keyboard library missing"
+        combo = _normalize_hotkey(combo)
+        if combo == DEFAULT_HOTKEY:
+            if self._custom_hotkey_handle is not None:
+                try:
+                    kb_lib.remove_hotkey(self._custom_hotkey_handle)
+                except Exception:
+                    pass
+            self._custom_hotkey_handle = None
+            self._custom_hotkey_combo = ""
+            return True, ""
+        if not _valid_hotkey(combo):
+            return False, "invalid format"
+        try:
+            if self._custom_hotkey_handle is not None:
+                kb_lib.remove_hotkey(self._custom_hotkey_handle)
+            self._custom_hotkey_handle = kb_lib.add_hotkey(
+                combo, self._on_custom_hotkey, suppress=True
+            )
+            self._custom_hotkey_combo = combo
+            log.info("Custom hotkey registered: %s", combo)
+            return True, ""
+        except Exception as exc:
+            _log_exc("register_hotkey()", exc)
+            return False, str(exc)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1222,6 +1324,7 @@ class ClippyWindow(QMainWindow):
             "auto":    state["auto_capture"],
             "history": state["history"],
             "hist_enabled": state["history_enabled"],
+            "hotkey": state.get("hotkey", DEFAULT_HOTKEY),
             "toast":   "📋 Captured",
         })
         self.web.page().runJavaScript(f"window.__onState({json.dumps(payload)})")
@@ -1409,10 +1512,10 @@ body.daylight::after{
 .row-group.active-capture{background:rgba(123,87,255,.08);border-color:rgba(123,87,255,.36);}
 .row-group.search-match{border-color:rgba(168,85,247,.45);}
 .row-del{
-  position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:50%;
+  position:absolute;top:8px;right:8px;width:15px;height:15px;border-radius:50%;
   background:rgba(255,255,255,.9);border:1px solid rgba(198,208,232,.95);
   color:#5d6786;cursor:pointer;display:flex;align-items:center;justify-content:center;
-  z-index:12;font-size:17px;font-weight:700;line-height:1;transition:all .15s;
+  z-index:12;font-size:12px;font-weight:700;line-height:1;transition:all .15s;
   box-shadow:0 4px 10px rgba(109,122,156,.2);
 }
 .row-del:hover{background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.4);color:#c33232;}
@@ -1449,10 +1552,10 @@ body.daylight::after{
   display:flex;gap:5px;justify-content:flex-end;flex-shrink:0;
   position:absolute;right:6px;bottom:6px;z-index:6;
   background:rgba(255,255,255,.92);border:1px solid rgba(180,194,224,.92);border-radius:8px;padding:2px;
-  opacity:0;transform:translateY(3px);transition:opacity .05s linear,transform .05s linear;pointer-events:none;
+  opacity:0;visibility:hidden;transform:translateY(3px);transition:opacity .05s linear,transform .05s linear;pointer-events:none;
 }
 .card:hover .card-actions,.card.editing .card-actions{
-  opacity:1;transform:translateY(0);pointer-events:auto;
+  opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto;
 }
 .card-textarea{width:100%;height:100%;background:transparent;border:none;color:var(--text);font-size:17px;line-height:1.42;padding:0;outline:none;resize:none;font-family:'Cascadia Code','Cascadia Mono',Consolas,'Courier New',monospace;}
 mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;}
@@ -1493,6 +1596,15 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .theme-swatch{width:26px;height:26px;border-radius:7px;border:1px solid rgba(139,92,246,.25);}
 .theme-label{font-size:15px;font-weight:500;color:var(--textDim);}
 .theme-btn.active .theme-label{color:#a78bfa;}
+.hotkey-row{display:flex;gap:8px;align-items:center;}
+.hotkey-input{
+  flex:1;height:34px;border-radius:8px;border:1px solid var(--inputBorder);
+  background:var(--inputBg);color:var(--text);padding:0 10px;font-size:14px;outline:none;
+}
+.hotkey-input:focus{border-color:rgba(123,87,255,.62);box-shadow:0 0 0 2px rgba(123,87,255,.18);}
+.hotkey-save{margin-top:0;padding:8px 10px;}
+.hotkey-note{margin-top:7px;font-size:13px;color:var(--textMuted);}
+.hotkey-reset{margin-top:8px;}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px;}
 .toggle-info{flex:1;}
 .toggle-label{font-size:18px;font-weight:500;}
@@ -1587,6 +1699,16 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
     </div>
 
     <div class="settings-section">
+      <div class="s-title">Hotkey</div>
+      <div class="hotkey-row">
+        <input id="hotkey-input" class="hotkey-input" value="Ctrl + D" placeholder="Press your keys" onkeydown="onHotkeyInputKey(event)" oninput="this.dataset.value=''" />
+        <button class="action-btn hotkey-save" id="hotkey-save" onclick="saveHotkey()">Save</button>
+      </div>
+      <div class="hotkey-note">Default: Ctrl + D</div>
+      <button class="action-btn hotkey-reset" id="hotkey-reset" onclick="resetHotkey()">Reset to Ctrl + D</button>
+    </div>
+
+    <div class="settings-section">
       <div class="s-title">Capture</div>
       <div class="toggle-row">
         <div class="toggle-info">
@@ -1635,6 +1757,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 let bridge = null;
 let rows = [], cursor = {row_idx:0,entry_idx:0};
 let autoCapture = true, history = [], histEnabled = true;
+let hotkey = 'ctrl+d';
 let editingId = null, kbIdx = -1, searchTerm = '';
 let settingsOpen = false, dragCard = null, dragRow = null;
 let userTargetId = null;
@@ -1698,6 +1821,7 @@ function applyState(d) {
   autoCapture = d.auto        ?? true;
   history     = d.history     || [];
   histEnabled = d.hist_enabled ?? true;
+  hotkey      = (d.hotkey || 'ctrl+d').toLowerCase();
   // Restore persisted theme — use _applyThemeUI (DOM only) so we never call
   // bridge.setTheme() here, which would trigger save() → _push() → applyState
   // again — an infinite loop that was causing Clippy to freeze.
@@ -2000,6 +2124,9 @@ function _settingsNavItems() {
   return Array.from(document.querySelectorAll(
     '#settings .settings-close, ' +
     '#settings .theme-btn, ' +
+    '#settings #hotkey-input, ' +
+    '#settings #hotkey-save, ' +
+    '#settings #hotkey-reset, ' +
     '#settings #auto-toggle, ' +
     '#settings #hist-toggle, ' +
     '#settings #hist-clear, ' +
@@ -2042,6 +2169,7 @@ function _focusTopNav(idx) {
 
 function _handleSettingsKeys(e) {
   if (!settingsOpen) return false;
+  if (e.defaultPrevented) return true;
   const key = e.key;
   if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter', ' ', 'Escape', 'Home', 'End'].includes(key)) {
     return false;
@@ -2239,6 +2367,11 @@ function closeSettings(){
 function updateSettings(){
   document.getElementById('auto-toggle').classList.toggle('on',autoCapture);
   document.getElementById('hist-toggle').classList.toggle('on',histEnabled);
+  const hk = document.getElementById('hotkey-input');
+  if (hk) {
+    hk.value = formatHotkey(hotkey);
+    hk.dataset.value = hotkey;
+  }
   document.getElementById('history-section').style.opacity=histEnabled?'1':'0.45';
   const hl=document.getElementById('history-list');
   const hc=document.getElementById('hist-clear');
@@ -2249,6 +2382,76 @@ function updateSettings(){
     hl.innerHTML=history.map(item=>`<button class="hist-item" onclick="copyCard('__hist__','${escAttr(item)}')"><span class="hist-item-text">${escHtml(item)}</span><span style="font-size:9px;color:var(--textMuted)">copy</span></button>`).join('');
     hc.style.display='block';
   }
+}
+
+function normalizeHotkeyInput(v){
+  const p=(v||'').toLowerCase().replace(/\s+/g,'').split('+').filter(Boolean);
+  const out=[];
+  p.forEach(k=>{
+    if(k==='win'||k==='cmd'||k==='meta') k='windows';
+    if(!out.includes(k)) out.push(k);
+  });
+  return out.join('+');
+}
+function isValidHotkey(v){
+  const parts=v.split('+').filter(Boolean);
+  if(parts.length<2||parts.length>4) return false;
+  const mods=['ctrl','alt','shift','windows'];
+  const hasMod=parts.some(p=>mods.includes(p));
+  const hasKey=parts.some(p=>!mods.includes(p));
+  return hasMod&&hasKey;
+}
+function formatHotkey(v){
+  const map={ctrl:'Ctrl',alt:'Alt',shift:'Shift',windows:'Win',space:'Space'};
+  return (v||'ctrl+d').split('+').filter(Boolean).map(p=>map[p]||p.toUpperCase()).join(' + ');
+}
+function comboFromEvent(e){
+  const mods=[];
+  if(e.ctrlKey) mods.push('ctrl');
+  if(e.altKey) mods.push('alt');
+  if(e.shiftKey) mods.push('shift');
+  if(e.metaKey) mods.push('windows');
+  const skip=['control','shift','alt','meta','os','win','windows'];
+  let key=(e.key||'').toLowerCase();
+  if(skip.includes(key)) return null;
+  if(key===' ') key='space';
+  if(!key) return null;
+  return normalizeHotkeyInput([...mods,key].join('+'));
+}
+function onHotkeyInputKey(e){
+  if(e.key==='Tab') return;
+  e.preventDefault();
+  const combo=comboFromEvent(e);
+  if(!combo) return;
+  const i=document.getElementById('hotkey-input');
+  i.dataset.value=combo;
+  i.value=formatHotkey(combo);
+}
+function saveHotkey(){
+  const i=document.getElementById('hotkey-input');
+  const combo=normalizeHotkeyInput(i?.dataset?.value||i?.value||'');
+  if(!isValidHotkey(combo)){showToast('Use a valid combo like Ctrl + Alt + H','warn');return;}
+  if(!bridge||!bridge.setHotkey){showToast('Hotkey bridge unavailable','warn');return;}
+  bridge.setHotkey(combo,function(res){
+    const d=typeof res==='string'?JSON.parse(res):res;
+    if(d&&d.ok){
+      hotkey=d.hotkey||combo;
+      i.dataset.value=hotkey;
+      i.value=formatHotkey(hotkey);
+      showToast('Hotkey saved','ok');
+    }else{
+      showToast(d?.error||'Could not save hotkey','warn');
+      i.dataset.value=hotkey;
+      i.value=formatHotkey(hotkey);
+    }
+  });
+}
+function resetHotkey(){
+  const i=document.getElementById('hotkey-input');
+  if(!i) return;
+  i.dataset.value='ctrl+d';
+  i.value='Ctrl + D';
+  saveHotkey();
 }
 
 function toggleCapture(){
