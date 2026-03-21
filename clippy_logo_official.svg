@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#EEF5FF"/>
+      <stop offset="100%" stop-color="#F7F3FF"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6D4BFF"/>
+      <stop offset="100%" stop-color="#5BB6FF"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFF4A8"/>
+      <stop offset="100%" stop-color="#FFE47A"/>
+    </linearGradient>
+    <linearGradient id="penBody" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1F2B4A"/>
+      <stop offset="100%" stop-color="#39588F"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="700" fill="url(#bg)"/>
+  <rect x="120" y="120" width="960" height="460" rx="30" fill="#ffffff" stroke="#DFE8FB"/>
+
+  <g transform="translate(205,198)">
+    <rect x="0" y="0" width="170" height="170" rx="44" fill="url(#mark)"/>
+
+    <rect x="36" y="28" width="98" height="114" rx="14" fill="url(#paper)"/>
+    <path d="M116 28 L134 46 L116 46 Z" fill="#F6D95D"/>
+
+    <line x1="50" y1="64" x2="112" y2="64" stroke="#9C8331" stroke-width="6" stroke-linecap="round"/>
+    <line x1="50" y1="82" x2="108" y2="82" stroke="#9C8331" stroke-width="6" stroke-linecap="round"/>
+
+    <path d="M58 104 C74 96, 88 112, 102 104" stroke="#7C651F" stroke-width="4" fill="none" stroke-linecap="round"/>
+
+    <g transform="translate(72,96) rotate(-18)">
+      <rect x="0" y="0" width="68" height="12" rx="6" fill="url(#penBody)"/>
+      <rect x="8" y="2" width="32" height="8" rx="4" fill="#9DB8F7" fill-opacity="0.8"/>
+      <polygon points="68,0 84,6 68,12" fill="#E8EDF9"/>
+      <polygon points="84,6 93,6 84,2" fill="#27324E"/>
+      <polygon points="84,6 93,6 84,10" fill="#27324E"/>
+    </g>
+
+    <circle cx="153" cy="108" r="2.5" fill="#6D4BFF"/>
+  </g>
+
+  <text x="430" y="285" font-family="Segoe UI, Arial" font-size="108" font-weight="700" fill="#2C3560">Clippy</text>
+  <text x="430" y="346" font-family="Segoe UI, Arial" font-size="34" fill="#6C7AA5">Yellow Paper + Writing Pen</text>
+  <text x="205" y="520" font-family="Segoe UI, Arial" font-size="26" fill="#6C7AA5">Prototype 6 · Writing Action Concept</text>
+</svg>
