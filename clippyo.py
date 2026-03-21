@@ -1577,6 +1577,9 @@ body.daylight::after{
 .card:hover .card-actions,.card.editing .card-actions{
   opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto;
 }
+.card.hover-actions .card-actions{
+  opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto;
+}
 .card-textarea{width:100%;height:100%;background:transparent;border:none;color:var(--text);font-size:17px;line-height:1.42;padding:0;outline:none;resize:none;font-family:'Cascadia Code','Cascadia Mono',Consolas,'Courier New',monospace;}
 mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;}
 
@@ -2024,6 +2027,8 @@ function renderAll() {
 
       return `<div class="${cls}" id="card-${entry.id}"
         onclick="onCardClick(event,'${row.id}','${entry.id}')"
+        onmouseenter="setCardHover(this,true)"
+        onmouseleave="setCardHover(this,false)"
         draggable="true"
         ondragstart="onCardDragStart(event,'${row.id}','${entry.id}')"
         ondragover="event.preventDefault()"
@@ -2071,6 +2076,10 @@ function onCardClick(event, rowId, entryId) {
 }
 
 // ── Editing ───────────────────────────────────────────────────────────────────
+function setCardHover(el, on){
+  if(!el) return;
+  el.classList.toggle('hover-actions', !!on);
+}
 const pendingText={};
 function syncTA(id,val){pendingText[id]=val;}
 function editCard(id){editingId=id;renderAll();}
