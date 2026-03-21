@@ -15,8 +15,8 @@ from pathlib import Path
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QSystemTrayIcon, QMenu
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
-from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QUrl, QThread, Qt, QTimer, QPoint
-from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QBrush, QPen, QRadialGradient, QLinearGradient, QCursor
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QUrl, QThread, Qt, QTimer, QPoint, QRectF
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter, QBrush, QPen, QRadialGradient, QLinearGradient, QCursor, QPainterPath, QRegion
 
 try:
     import pyperclip; CLIPBOARD_OK = True
@@ -852,6 +852,7 @@ class ClippyWindow(QMainWindow):
         W, H = 640, 460
         self.resize(W, H)
         self.setMinimumSize(500, 380)
+        self._corner_radius = 18
 
         self._icon = make_icon(64)
         self.setWindowIcon(self._icon)
@@ -948,6 +949,16 @@ class ClippyWindow(QMainWindow):
         self._watchdog.setInterval(10_000)
         self._watchdog.timeout.connect(self._watchdog_check)
         self._watchdog.start()
+        QTimer.singleShot(0, self._apply_rounded_mask)
+
+    def _apply_rounded_mask(self):
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), self._corner_radius, self._corner_radius)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_rounded_mask()
 
     def _show_window(self, cx=-1, cy=-1):
         """cx, cy: caret screen coords from the destination app (-1,-1 = unknown)."""
@@ -1239,8 +1250,8 @@ body{background:var(--appBg);color:var(--text);transition:background .3s,color .
 @keyframes slideIn{from{opacity:0;transform:translateX(20px);}to{opacity:1;transform:translateX(0);}}
 @keyframes fadeUp{from{opacity:0;transform:translateX(-50%) translateY(8px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
 
-/* ── DARK (default) ── */
-body.dark{
+/* ── NIGHT ── */
+body.dark,body.night{
   --appBg:#0d0f1e;--navBg:rgba(18,20,40,1);--navBorder:rgba(139,92,246,.25);
   --panelBg:#10132a;--panelBorder:rgba(139,92,246,.18);
   --rowBg:rgba(255,255,255,.016);--rowBorder:rgba(255,255,255,.055);
@@ -1381,7 +1392,7 @@ body.daylight::after{
 
 /* ── CARD ── */
 .card{
-  flex:0 0 auto;min-width:0;max-width:calc((100% - 24px)/4);aspect-ratio:1/1;height:100%;position:relative;
+  flex:1 1 0;min-width:0;max-width:none;aspect-ratio:auto;height:100%;position:relative;
   background:var(--cardBg);border:1px solid var(--cardBorder);border-radius:11px;
   padding:9px 10px 7px;display:flex;flex-direction:column;justify-content:space-between;
   overflow:hidden;transition:all .16s;cursor:pointer;
@@ -1407,18 +1418,18 @@ body.daylight::after{
 .card-text{flex:1;overflow:hidden;font-size:12px;line-height:1.48;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;}
 .card-text.empty-slot{color:var(--textMuted);font-style:italic;font-size:11px;}
 .card-text.code-font{font-family:'Cascadia Code','Cascadia Mono',Consolas,'Courier New',monospace;font-size:10.5px;}
-.card-actions{display:flex;gap:3px;justify-content:flex-end;padding-top:3px;flex-shrink:0;opacity:0;transition:opacity .16s;pointer-events:none;}
-.card:hover .card-actions,.card.editing .card-actions{opacity:1;pointer-events:auto;}
+.card-actions{display:flex;gap:5px;justify-content:flex-end;padding-top:3px;flex-shrink:0;opacity:.08;transition:opacity .16s;pointer-events:auto;}
+.card:hover .card-actions,.card.editing .card-actions,.card.kb-focus .card-actions,.card.active-slot .card-actions{opacity:1;pointer-events:auto;}
 .card-textarea{width:100%;height:100%;background:transparent;border:none;color:var(--text);font-size:12px;line-height:1.48;padding:0;outline:none;resize:none;font-family:'Cascadia Code','Cascadia Mono',Consolas,'Courier New',monospace;}
 mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;}
 
 /* ── CARD BUTTONS ── */
 .cbtn{
-  width:20px;height:20px;border-radius:5px;padding:0;flex-shrink:0;
+  width:22px;height:22px;border-radius:6px;padding:0;flex-shrink:0;
   cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:9px;
-  transition:all .12s;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);color:#94a3b8;
+  transition:all .12s;background:rgba(255,255,255,.62);border:1px solid rgba(178,193,225,.9);color:#566387;
 }
-.cbtn:hover{background:rgba(255,255,255,.13);}
+.cbtn:hover{background:rgba(255,255,255,.92);border-color:rgba(123,87,255,.36);color:#3f4b72;}
 .cbtn.active{background:rgba(109,40,217,.25);border-color:rgba(139,92,246,.5);color:#a78bfa;}
 .cbtn.danger{border-color:rgba(239,68,68,.18);color:#ef4444;}
 .cbtn.danger:hover{background:rgba(239,68,68,.2);border-color:rgba(239,68,68,.42);color:#f87171;}
@@ -1426,7 +1437,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 
 /* ── ADD VARIATION ── */
 .card-add{
-  flex:0 0 auto;min-width:0;max-width:calc((100% - 24px)/4);aspect-ratio:1/1;height:100%;cursor:pointer;
+  flex:1 1 0;min-width:0;max-width:none;aspect-ratio:auto;height:100%;cursor:pointer;
   background:rgba(123,87,255,.03);border:1.5px dashed rgba(123,87,255,.28);
   border-radius:11px;display:flex;flex-direction:column;align-items:center;
   justify-content:center;gap:3px;color:#8b7fc0;font-size:10.5px;font-family:inherit;transition:all .16s;
@@ -1533,9 +1544,9 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
     <div class="settings-section">
       <div class="s-title">Theme</div>
       <div class="theme-grid">
-        <button class="theme-btn active" id="theme-dark" onclick="setTheme('dark')">
+        <button class="theme-btn active" id="theme-night" onclick="setTheme('night')">
           <div class="theme-swatch" style="background:linear-gradient(135deg,#0d0f1e,#1e1b4b)"></div>
-          <span class="theme-label">Dark</span>
+          <span class="theme-label">Night</span>
         </button>
         <button class="theme-btn" id="theme-daylight" onclick="setTheme('daylight')">
           <div class="theme-swatch" style="background:linear-gradient(135deg,#f4f2ff,#ede9fe)"></div>
@@ -1706,6 +1717,7 @@ function showToast(msg, type='ok') {
 // back to Python (which would re-push state → re-trigger applyState → loop).
 let _currentTheme = 'daylight';
 function _applyThemeUI(t) {
+  if (t === 'dark') t = 'night'; // Backward compatibility with older saved theme values.
   if (!t || t === _currentTheme) return;  // nothing to do
   _currentTheme = t;
   document.body.className = t;
@@ -1717,6 +1729,7 @@ function _applyThemeUI(t) {
 // setTheme — called by the user clicking a theme button.
 // Updates the DOM AND persists the choice to Python (only if actually changed).
 function setTheme(t) {
+  if (t === 'dark') t = 'night';
   if (t === _currentTheme) return;        // user clicked the already-active theme
   _applyThemeUI(t);
   if (bridge) bridge.setTheme(t);
@@ -1973,7 +1986,7 @@ function _focusSettingsItem(idx) {
 function _handleSettingsKeys(e) {
   if (!settingsOpen) return false;
   const key = e.key;
-  if (!['ArrowDown', 'ArrowUp', 'Enter', ' ', 'Escape', 'Home', 'End'].includes(key)) {
+  if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Enter', ' ', 'Escape', 'Home', 'End'].includes(key)) {
     return false;
   }
   e.preventDefault();
@@ -1990,6 +2003,14 @@ function _handleSettingsKeys(e) {
   }
   if (key === 'ArrowUp') {
     _focusSettingsItem(settingsNavIdx - 1);
+    return true;
+  }
+  if (key === 'ArrowLeft') {
+    _focusSettingsItem(settingsNavIdx - 1);
+    return true;
+  }
+  if (key === 'ArrowRight') {
+    _focusSettingsItem(settingsNavIdx + 1);
     return true;
   }
   if (key === 'Home') {
