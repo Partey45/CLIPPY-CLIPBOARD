@@ -198,11 +198,22 @@ def load():
             return
         except Exception as exc:
             _log_exc("load()", exc)
+            # Auto-heal corrupted/empty JSON so startup does not repeatedly fail.
+            try:
+                bad = DATA_FILE.with_suffix(f".corrupt-{int(time.time())}.json")
+                DATA_FILE.replace(bad)
+                log.warning("Corrupted state moved to %s", bad)
+            except Exception:
+                pass
     state["rows"] = [
         {"id":_gid(),"color_idx":0,"entries":[
             _entry("Welcome to Clippy!"),
         ]},
     ]
+    state["history_enabled"] = True
+    state["theme"] = "daylight"
+    state["hotkey"] = DEFAULT_HOTKEY
+    save()
 
 def save():
     try:
@@ -924,6 +935,7 @@ class ClippyWindow(QMainWindow):
         self._first_show  = True
         self._showing     = False   # True during the show animation — suppresses blur-hide
         self._pasting     = False
+        self._last_show_request_ts = 0.0
 
         log.info("ClippyWindow.__init__ — W=%d H=%d", W, H)
 
@@ -1089,6 +1101,14 @@ class ClippyWindow(QMainWindow):
 
     def _show_window(self, cx=-1, cy=-1):
         """cx, cy: caret screen coords from the destination app (-1,-1 = unknown)."""
+        now = time.monotonic()
+        if now - getattr(self, "_last_show_request_ts", 0.0) < 0.45:
+            log.debug("_show_window() throttled")
+            return
+        self._last_show_request_ts = now
+        if self.isVisible() and self.isActiveWindow() and not self._pasting:
+            log.debug("_show_window() ignored (already foreground)")
+            return
         log.debug("_show_window() called — caret=(%d,%d)", cx, cy)
         self._pending_pos = (cx, cy)   # stash so _do_show can read it
         # ── Layer 3: reload if blank before showing ───────────────────────────
