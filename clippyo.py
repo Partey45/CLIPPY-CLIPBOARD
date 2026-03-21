@@ -672,59 +672,46 @@ def make_icon(size=64):
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     s = float(size)
 
-    # Background rounded tile
     from PyQt6.QtCore import QRectF
-    bg = QLinearGradient(0,0,s,s)
-    bg.setColorAt(0, QColor("#6d4bff"))
-    bg.setColorAt(1, QColor("#5bb6ff"))
-    p.setBrush(QBrush(bg))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawRoundedRect(QRectF(0,0,s,s), s*0.18, s*0.18)
 
-    # Yellow paper
-    paper = QLinearGradient(0, s*0.20, 0, s*0.86)
-    paper.setColorAt(0, QColor("#fff7b7"))
-    paper.setColorAt(1, QColor("#ffe37a"))
-    p.setBrush(QBrush(paper))
-    p.drawRoundedRect(QRectF(s*0.18, s*0.17, s*0.52, s*0.66), s*0.09, s*0.09)
-    p.setBrush(QBrush(QColor("#f3d65d")))
-    p.drawPolygon(
-        QPoint(int(s*0.59), int(s*0.17)),
-        QPoint(int(s*0.70), int(s*0.28)),
-        QPoint(int(s*0.59), int(s*0.28)),
-    )
-
-    # Writing lines
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    p.setPen(QPen(QColor("#9a7c2a"), max(1, int(s*0.06)), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-    p.drawLine(int(s*0.26), int(s*0.38), int(s*0.58), int(s*0.38))
-    p.drawLine(int(s*0.26), int(s*0.52), int(s*0.56), int(s*0.52))
-    p.setPen(QPen(QColor("#7a6120"), max(1, int(s*0.045)), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-    p.drawLine(int(s*0.26), int(s*0.66), int(s*0.48), int(s*0.62))
-
-    # Pen body + tip (writing on paper)
+    # Clipboard body (tilted yellow card with purple stroke)
     p.save()
-    p.translate(s*0.48, s*0.55)
-    p.rotate(-25)
-    pen_grad = QLinearGradient(0, 0, s*0.35, 0)
-    pen_grad.setColorAt(0, QColor("#1f2b4a"))
-    pen_grad.setColorAt(1, QColor("#39588f"))
-    p.setBrush(QBrush(pen_grad))
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawRoundedRect(QRectF(0, 0, s*0.34, s*0.08), s*0.04, s*0.04)
-    p.setBrush(QBrush(QColor("#e8edf9")))
-    p.drawPolygon(
-        QPoint(int(s*0.34), 0),
-        QPoint(int(s*0.43), int(s*0.04)),
-        QPoint(int(s*0.34), int(s*0.08)),
-    )
-    p.setBrush(QBrush(QColor("#27324e")))
-    p.drawPolygon(
-        QPoint(int(s*0.43), int(s*0.04)),
-        QPoint(int(s*0.48), int(s*0.04)),
-        QPoint(int(s*0.43), int(s*0.02)),
-    )
+    p.translate(s*0.66, s*0.58)
+    p.rotate(16)
+    clip_rect = QRectF(-s*0.24, -s*0.28, s*0.40, s*0.52)
+    p.setBrush(QBrush(QColor("#f6c64b")))
+    p.setPen(QPen(QColor("#5c57a8"), max(2, int(s*0.055)), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.drawRoundedRect(clip_rect, s*0.10, s*0.10)
+    # Clip head
+    p.setBrush(QBrush(QColor("#ffffff")))
+    p.setPen(QPen(QColor("#5c57a8"), max(2, int(s*0.045)), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.drawRoundedRect(QRectF(-s*0.08, -s*0.35, s*0.22, s*0.12), s*0.05, s*0.05)
     p.restore()
+
+    # Blue tape loop
+    ring_rect = QRectF(s*0.08, s*0.18, s*0.56, s*0.56)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.setPen(QPen(QColor("#3f6ea3"), max(3, int(s*0.08)), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.drawEllipse(ring_rect)
+    p.setPen(QPen(QColor("#e9ad2e"), max(2, int(s*0.05)), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.drawEllipse(QRectF(s*0.16, s*0.26, s*0.40, s*0.40))
+
+    # Circular arrow inside loop
+    p.setPen(QPen(QColor("#2f66a3"), max(2, int(s*0.06)), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.drawArc(QRectF(s*0.22, s*0.32, s*0.28, s*0.28), 40*16, 260*16)
+    p.setBrush(QBrush(QColor("#2f66a3")))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawPolygon(
+        QPoint(int(s*0.50), int(s*0.49)),
+        QPoint(int(s*0.60), int(s*0.48)),
+        QPoint(int(s*0.53), int(s*0.57)),
+    )
+
+    # Accent sparkle near clipboard
+    p.setPen(QPen(QColor("#5c57a8"), max(1, int(s*0.035)), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.drawLine(int(s*0.87), int(s*0.44), int(s*0.93), int(s*0.41))
+    p.drawLine(int(s*0.89), int(s*0.50), int(s*0.96), int(s*0.50))
+    p.drawLine(int(s*0.87), int(s*0.56), int(s*0.93), int(s*0.59))
 
     p.end()
     return QIcon(pix)
