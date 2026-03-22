@@ -9,8 +9,9 @@ Fixes:
   6. Default window size matches screenshot (~660×560)
 """
 
-import sys, json, uuid, os, csv, io, threading, time, traceback, logging
+import sys, json, uuid, os, csv, io, threading, time, traceback, logging, subprocess
 from pathlib import Path
+from datetime import datetime, timedelta
 
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QSystemTrayIcon, QMenu
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -30,6 +31,7 @@ except ImportError:
 
 DATA_FILE  = Path(__file__).parent / "clippy_data.json"
 DEFAULT_HOTKEY = "ctrl+d"
+BACKUP_DIR = Path.home() / "Documents" / "Clippy Backups"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LOGGING — rotating crash + event log written next to the script
@@ -145,12 +147,38 @@ def _ensure_startup():
     except Exception as exc:
         log.warning("Could not remove stale Startup launcher: %s", exc)
 
+def _disable_startup():
+    """Remove HKCU Run key so Clippy no longer auto-starts at login."""
+    try:
+        import winreg
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, "Clippy")
+        log.info("Removed HKCU Run key for Clippy")
+    except FileNotFoundError:
+        log.info("HKCU Run key for Clippy already absent")
+    except Exception as exc:
+        _log_exc("_disable_startup()", exc)
+
+def _set_launch_at_startup(enabled: bool) -> bool:
+    """Toggle Windows startup registration. Returns True on success."""
+    try:
+        if enabled:
+            _ensure_startup()
+        else:
+            _disable_startup()
+        return True
+    except Exception as exc:
+        _log_exc("_set_launch_at_startup()", exc)
+        return False
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STATE
 # ══════════════════════════════════════════════════════════════════════════════
 def _gid(): return uuid.uuid4().hex[:12]   # 48-bit entropy — collision-safe up to millions of entries
 def _entry(text=""): return {"id":_gid(),"text":text,"copy_count":0,"pinned":False}
-def _row(ci=0):      return {"id":_gid(),"color_idx":ci,"entries":[_entry()]}
+def _row(ci=0):
+    return {"id":_gid(),"color_idx":ci,"entries":[_entry()],"pinned":False,"label":""}
 
 state = {
     "rows": [],
@@ -162,6 +190,11 @@ state = {
     "history_enabled": True,
     "theme": "daylight",
     "hotkey": DEFAULT_HOTKEY,
+    "poll_rate": 500,
+    "paste_plain_text": True,
+    "launch_at_startup": True,
+    "history_limit": 10,
+    "last_backup": "",
 }
 
 def _normalize_hotkey(combo: str) -> str:
@@ -193,6 +226,44 @@ def load():
             state["history_enabled"] = d.get("history_enabled", True)
             state["theme"] = d.get("theme", "daylight")
             state["hotkey"] = _normalize_hotkey(d.get("hotkey", DEFAULT_HOTKEY)) or DEFAULT_HOTKEY
+            state["poll_rate"] = int(d.get("poll_rate", 500))
+            state["paste_plain_text"] = bool(d.get("paste_plain_text", True))
+            state["launch_at_startup"] = bool(d.get("launch_at_startup", True))
+            state["history_limit"] = int(d.get("history_limit", 10))
+            state["last_backup"] = d.get("last_backup", "")
+
+            # Normalize legacy or partial data so older JSON versions always load safely.
+            fixed_rows = []
+            for i, row in enumerate(state["rows"]):
+                if not isinstance(row, dict):
+                    continue
+                entries = row.get("entries", [])
+                if not isinstance(entries, list):
+                    entries = []
+                fixed_entries = []
+                for e in entries:
+                    if not isinstance(e, dict):
+                        continue
+                    fixed_entries.append({
+                        "id": e.get("id") or _gid(),
+                        "text": str(e.get("text", "")),
+                        "copy_count": int(e.get("copy_count", 0)),
+                        "pinned": bool(e.get("pinned", False)),
+                    })
+                if not fixed_entries:
+                    fixed_entries = [_entry()]
+                fixed_rows.append({
+                    "id": row.get("id") or _gid(),
+                    "color_idx": int(row.get("color_idx", i)),
+                    "entries": fixed_entries[:4],
+                    "pinned": bool(row.get("pinned", False)),
+                    "label": str(row.get("label", "")),
+                })
+            state["rows"] = fixed_rows or [_row(0)]
+            state["poll_rate"] = 250 if state["poll_rate"] <= 250 else 500 if state["poll_rate"] <= 750 else 1000
+            if state["history_limit"] not in (5, 10, 20, 50):
+                state["history_limit"] = 10
+            state["history"] = [str(x) for x in d.get("history", [])][:state["history_limit"]]
             log.info("State loaded from %s (%d rows, theme=%s)",
                      DATA_FILE, len(state["rows"]), state["theme"])
             return
@@ -205,14 +276,16 @@ def load():
                 log.warning("Corrupted state moved to %s", bad)
             except Exception:
                 pass
-    state["rows"] = [
-        {"id":_gid(),"color_idx":0,"entries":[
-            _entry("Welcome to Clippy!"),
-        ]},
-    ]
+    state["rows"] = [_row(0)]
+    state["rows"][0]["entries"][0]["text"] = "Welcome to Clippy!"
     state["history_enabled"] = True
     state["theme"] = "daylight"
     state["hotkey"] = DEFAULT_HOTKEY
+    state["poll_rate"] = 500
+    state["paste_plain_text"] = True
+    state["launch_at_startup"] = True
+    state["history_limit"] = 10
+    state["last_backup"] = ""
     save()
 
 def save():
@@ -222,9 +295,46 @@ def save():
             "history_enabled": state["history_enabled"],
             "theme": state.get("theme", "dark"),
             "hotkey": state.get("hotkey", DEFAULT_HOTKEY),
+            "poll_rate": state.get("poll_rate", 500),
+            "paste_plain_text": state.get("paste_plain_text", True),
+            "launch_at_startup": state.get("launch_at_startup", True),
+            "history_limit": state.get("history_limit", 10),
+            "last_backup": state.get("last_backup", ""),
+            "history": state.get("history", []),
         }, ensure_ascii=False, indent=2), "utf-8")
     except Exception as exc:
         _log_exc("save()", exc)
+
+def _run_backup() -> bool:
+    try:
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        now = datetime.now()
+        backup_file = BACKUP_DIR / f"clippy_backup_{now.strftime('%Y-%m-%d')}.json"
+        with _state_lock:
+            payload = {
+                "rows": state.get("rows", []),
+                "created_at": now.isoformat(timespec="seconds"),
+            }
+        backup_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), "utf-8")
+
+        cutoff = now - timedelta(days=7)
+        for path in BACKUP_DIR.glob("clippy_backup_*.json"):
+            try:
+                stamp = path.stem.replace("clippy_backup_", "")
+                file_date = datetime.strptime(stamp, "%Y-%m-%d")
+                if file_date < cutoff:
+                    path.unlink(missing_ok=True)
+            except Exception:
+                continue
+
+        with _state_lock:
+            state["last_backup"] = now.strftime("%Y-%m-%d %H:%M:%S")
+        save()
+        log.info("Backup saved: %s", backup_file)
+        return True
+    except Exception as exc:
+        _log_exc("_run_backup()", exc)
+        return False
 
 def find_next_capture_slot(rows, ri, ei):
     """
@@ -290,6 +400,11 @@ class Bridge(QObject):
                 "hist_enabled": state["history_enabled"],
                 "theme":      state.get("theme", "dark"),
                 "hotkey":     state.get("hotkey", DEFAULT_HOTKEY),
+                "poll_rate":  state.get("poll_rate", 500),
+                "paste_plain_text": state.get("paste_plain_text", True),
+                "launch_at_startup": state.get("launch_at_startup", True),
+                "history_limit": state.get("history_limit", 10),
+                "last_backup": state.get("last_backup", ""),
             }
         if extra: payload.update(extra)
         self.stateChanged.emit(json.dumps(payload))
@@ -306,6 +421,11 @@ class Bridge(QObject):
                 "clip_ok":    CLIPBOARD_OK,
                 "theme":      state.get("theme", "dark"),
                 "hotkey":     state.get("hotkey", DEFAULT_HOTKEY),
+                "poll_rate":  state.get("poll_rate", 500),
+                "paste_plain_text": state.get("paste_plain_text", True),
+                "launch_at_startup": state.get("launch_at_startup", True),
+                "history_limit": state.get("history_limit", 10),
+                "last_backup": state.get("last_backup", ""),
             })
 
     # ── Copy entry to clipboard ───────────────────────────────────────────────
@@ -467,6 +587,7 @@ class Bridge(QObject):
     def clearHistory(self):
         with _state_lock:
             state["history"] = []
+        save()
         self._push()
 
     @pyqtSlot(str)
@@ -505,6 +626,79 @@ class Bridge(QObject):
         save()
         self._push({"toast": f"Hotkey set to {combo.upper()}"})
         return json.dumps({"ok": True, "hotkey": combo})
+
+    @pyqtSlot(int)
+    def setPollRate(self, ms):
+        if ms not in (250, 500, 1000):
+            return
+        with _state_lock:
+            state["poll_rate"] = ms
+        save()
+        self._push()
+
+    @pyqtSlot(str)
+    def pinRow(self, row_id):
+        with _state_lock:
+            for row in state["rows"]:
+                if row["id"] == row_id:
+                    row["pinned"] = not row.get("pinned", False)
+                    break
+        save()
+        self._push()
+
+    @pyqtSlot(bool)
+    def setPastePlainText(self, enabled):
+        with _state_lock:
+            state["paste_plain_text"] = bool(enabled)
+        save()
+        self._push()
+
+    @pyqtSlot(bool)
+    def setLaunchAtStartup(self, enabled):
+        enabled = bool(enabled)
+        ok = _set_launch_at_startup(enabled)
+        if not ok:
+            self._push({"toast": "Startup setting failed", "toast_type": "warn"})
+            return
+        with _state_lock:
+            state["launch_at_startup"] = enabled
+        save()
+        self._push()
+
+    @pyqtSlot(int)
+    def setHistoryLimit(self, limit):
+        if limit not in (5, 10, 20, 50):
+            return
+        with _state_lock:
+            state["history_limit"] = limit
+            state["history"] = state["history"][:limit]
+        save()
+        self._push()
+
+    @pyqtSlot()
+    def backupNow(self):
+        if _run_backup():
+            self._push({"toast": "Backup saved to Documents"})
+        else:
+            self._push({"toast": "Backup failed — check clippy.log", "toast_type": "warn"})
+
+    @pyqtSlot()
+    def openBackupFolder(self):
+        try:
+            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+            subprocess.Popen(["explorer", str(BACKUP_DIR)])
+        except Exception as exc:
+            _log_exc("openBackupFolder()", exc)
+            self._push({"toast": "Could not open backup folder", "toast_type": "warn"})
+
+    @pyqtSlot()
+    def clearAllData(self):
+        with _state_lock:
+            state["rows"] = [_row(0)]
+            state["history"] = []
+            state["cursor"] = {"row_idx": 0, "entry_idx": 0}
+        save()
+        self._push({"toast": "All data cleared"})
 
     @pyqtSlot()
     def exportJSON(self):
@@ -559,12 +753,21 @@ class Bridge(QObject):
         path, _ = QFileDialog.getOpenFileName(None, "Open JSON", "", "JSON (*.json)")
         if not path:
             return
+        backup = None
         try:
-            data = json.loads(Path(path).read_text("utf-8"))
+            raw = json.loads(Path(path).read_text("utf-8"))
+
+            # Accept both supported shapes:
+            # 1) Export/import format: top-level array of row objects
+            # 2) Backup format: {"rows":[...], "created_at":"..."}
+            if isinstance(raw, dict) and isinstance(raw.get("rows"), list):
+                data = raw["rows"]
+            else:
+                data = raw
 
             # Schema validation — must be a list of row dicts with required keys
             if not isinstance(data, list):
-                raise ValueError("Top-level value must be a JSON array of groups")
+                raise ValueError("Top-level value must be a JSON array of groups or an object with a 'rows' array")
             for i, row in enumerate(data):
                 if not isinstance(row, dict):
                     raise ValueError(f"Group {i} is not an object")
@@ -577,7 +780,21 @@ class Bridge(QObject):
             # Backup existing rows before replacing
             with _state_lock:
                 backup = state["rows"].copy()
-                state["rows"] = data
+                normalized = []
+                for i, row in enumerate(data):
+                    normalized.append({
+                        "id": row.get("id") or _gid(),
+                        "color_idx": int(row.get("color_idx", i)),
+                        "pinned": bool(row.get("pinned", False)),
+                        "label": str(row.get("label", "")),
+                        "entries": [{
+                            "id": e.get("id") or _gid(),
+                            "text": str(e.get("text", "")),
+                            "copy_count": int(e.get("copy_count", 0)),
+                            "pinned": bool(e.get("pinned", False)),
+                        } for e in row.get("entries", []) if isinstance(e, dict)] or [_entry()],
+                    })
+                state["rows"] = normalized
 
             save()
             log.info("importJSON: imported %d rows from %s", len(data), path)
@@ -589,7 +806,7 @@ class Bridge(QObject):
             # Restore backup if we already replaced state
             try:
                 with _state_lock:
-                    if state["rows"] is not backup:
+                    if backup is not None and state["rows"] is not backup:
                         state["rows"] = backup
             except Exception:
                 pass
@@ -605,6 +822,10 @@ class ClipboardPoller(QThread):
     def run(self):
         last_seen = ""
         MAX_ROWS = 50  # FIX C3: cap row growth to prevent unbounded expansion
+        def _sleep_tick():
+            with _state_lock:
+                ms = int(state.get("poll_rate", 500))
+            time.sleep(max(0.1, ms / 1000.0))
 
         while True:
             # ── Sleep is ALWAYS at the end of the loop body ──────────────────
@@ -616,12 +837,12 @@ class ClipboardPoller(QThread):
             with _state_lock:
                 auto_on = state["auto_capture"]
             if not auto_on or not CLIPBOARD_OK:
-                time.sleep(0.5)
+                _sleep_tick()
                 continue
 
             global _clippy_is_pasting, _clippy_last_pasted
             if _clippy_is_pasting:
-                time.sleep(0.5)
+                _sleep_tick()
                 continue
 
             try:
@@ -629,16 +850,16 @@ class ClipboardPoller(QThread):
 
                 if not text:
                     last_seen = ""
-                    time.sleep(0.5)
+                    _sleep_tick()
                     continue
 
                 if text == last_seen:
-                    time.sleep(0.5)
+                    _sleep_tick()
                     continue
 
                 if text == _clippy_last_pasted:
                     last_seen = text
-                    time.sleep(0.5)
+                    _sleep_tick()
                     continue
 
                 last_seen = text
@@ -646,9 +867,10 @@ class ClipboardPoller(QThread):
                 with _state_lock:
                     # History
                     if state["history_enabled"]:
+                        lim = int(state.get("history_limit", 10))
                         h = [t for t in state["history"] if t != text]
                         h.insert(0, text)
-                        state["history"] = h[:5]
+                        state["history"] = h[:lim]
 
                     rows = state["rows"]
                     c    = state["cursor"]
@@ -659,7 +881,7 @@ class ClipboardPoller(QThread):
                         # FIX C3: only create new row if under cap
                         if len(rows) < MAX_ROWS:
                             rows.append({"id": _gid(), "color_idx": len(rows),
-                                         "entries": [_entry(text)]})
+                                         "entries": [_entry(text)], "pinned": False, "label": ""})
                             ri = len(rows) - 1
                             ei = 0
                         else:
@@ -668,11 +890,11 @@ class ClipboardPoller(QThread):
                             for old_ri, old_row in enumerate(rows):
                                 if not any(e.get("pinned") for e in old_row["entries"]):
                                     rows[old_ri] = {"id": _gid(), "color_idx": old_ri,
-                                                    "entries": [_entry(text)]}
+                                                    "entries": [_entry(text)], "pinned": False, "label": ""}
                                     ri = old_ri; ei = 0
                                     break
                             else:
-                                time.sleep(0.5)
+                                _sleep_tick()
                                 continue  # All rows pinned — skip capture
                     else:
                         entries = rows[ri]["entries"]
@@ -689,11 +911,11 @@ class ClipboardPoller(QThread):
                             if ri >= len(rows):
                                 if len(rows) < MAX_ROWS:
                                     rows.append({"id": _gid(), "color_idx": len(rows),
-                                                 "entries": [_entry(text)]})
+                                                 "entries": [_entry(text)], "pinned": False, "label": ""})
                                     ei = 0
                                 else:
                                     log.warning("Row cap reached during overflow — skipping capture")
-                                    time.sleep(0.5)
+                                    _sleep_tick()
                                     continue
                             else:
                                 ne = rows[ri]["entries"]
@@ -706,11 +928,11 @@ class ClipboardPoller(QThread):
                                     ri += 1
                                     if len(rows) < MAX_ROWS:
                                         rows.append({"id": _gid(), "color_idx": len(rows),
-                                                     "entries": [_entry(text)]})
+                                                     "entries": [_entry(text)], "pinned": False, "label": ""})
                                         ei = 0
                                     else:
                                         log.warning("Row cap reached — skipping capture")
-                                        time.sleep(0.5)
+                                        _sleep_tick()
                                         continue
 
                     state["cursor"] = find_next_capture_slot(rows, ri, ei)
@@ -722,7 +944,7 @@ class ClipboardPoller(QThread):
                 _log_exc("ClipboardPoller.run()", exc)
 
             # Single canonical sleep — all non-skip paths reach here
-            time.sleep(0.5)
+            _sleep_tick()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -922,6 +1144,7 @@ class ClippyWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        load()
         # Use only the in-app header (hide native Windows title bar/chrome).
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setWindowTitle("Clippy")
@@ -1020,7 +1243,6 @@ class ClippyWindow(QMainWindow):
         self.poller.start()
 
         _win_ref[0] = self  # give Bridge slots access to this window
-        load()
         self.web.setHtml(BUILD_UI(), QUrl("about:blank"))
         self._page_ready = False
         # On cold boot Chromium can take 8+ seconds to be ready — use a longer
@@ -1038,6 +1260,13 @@ class ClippyWindow(QMainWindow):
         self._watchdog.setInterval(10_000)
         self._watchdog.timeout.connect(self._watchdog_check)
         self._watchdog.start()
+
+        QTimer.singleShot(5000, self._run_backup_and_push)
+        self._backup_timer = QTimer(self)
+        self._backup_timer.setInterval(24 * 60 * 60 * 1000)
+        self._backup_timer.timeout.connect(self._run_backup_and_push)
+        self._backup_timer.start()
+
         QTimer.singleShot(0, self._set_native_rounded_corners)
 
     def _set_native_rounded_corners(self):
@@ -1056,6 +1285,10 @@ class ClippyWindow(QMainWindow):
             )
         except Exception:
             pass
+
+    def _run_backup_and_push(self):
+        if _run_backup():
+            self.bridge._push()
 
     def _on_custom_hotkey(self):
         try:
@@ -1270,6 +1503,10 @@ class ClippyWindow(QMainWindow):
         there is zero gap between the write and the keystroke.
         """
         global _clippy_is_pasting
+        with _state_lock:
+            plain_only = bool(state.get("paste_plain_text", True))
+        if plain_only:
+            text = str(text or "")
         log.info("_do_paste_and_hide() — text=%r", text[:60] if text else "")
 
         # Freeze the poller — skips every tick until we release it
@@ -1344,6 +1581,11 @@ class ClippyWindow(QMainWindow):
             "auto":    state["auto_capture"],
             "history": state["history"],
             "hist_enabled": state["history_enabled"],
+            "poll_rate": state.get("poll_rate", 500),
+            "paste_plain_text": state.get("paste_plain_text", True),
+            "launch_at_startup": state.get("launch_at_startup", True),
+            "history_limit": state.get("history_limit", 10),
+            "last_backup": state.get("last_backup", ""),
             "hotkey": state.get("hotkey", DEFAULT_HOTKEY),
             "toast":   "📋 Captured",
         })
@@ -1502,7 +1744,7 @@ body.dark .logo-name,body.night .logo-name{color:#eaf0ff;}
 #search{
   width:100%;padding:9px 30px 9px 28px;
   background:var(--inputBg);border:1px solid var(--inputBorder);border-radius:100px;
-  color:var(--text);font-size:16px;outline:none;font-family:inherit;transition:border-color .2s,box-shadow .2s;
+  color:var(--text);font-size:16px;outline:none;font-family:inherit;transition:border-color .06s,box-shadow .06s;
 }
 #search:focus{border-color:var(--accentPrimary,rgba(123,87,255,.45));box-shadow:0 0 0 3px var(--accentGlow,rgba(123,87,255,.12));}
 .search-clear{position:absolute;right:9px;top:50%;transform:translateY(-50%);
@@ -1512,16 +1754,16 @@ body.dark .logo-name,body.night .logo-name{color:#eaf0ff;}
   flex-shrink:0;background:var(--accentPrimary,#6d4bff);
   border:none;border-radius:11px;color:#fff;padding:8px 14px;
   font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;
-  box-shadow:0 8px 18px var(--accentGlow,rgba(109,75,255,.28));display:flex;align-items:center;gap:4px;transition:opacity .15s,transform .15s;
+  box-shadow:0 8px 18px var(--accentGlow,rgba(109,75,255,.28));display:flex;align-items:center;gap:4px;transition:opacity .08s,transform .08s;
 }
 .btn-new:hover{opacity:.9;transform:translateY(-1px);}
 
 .btn-gear{
   flex-shrink:0;width:35px;height:35px;border-radius:11px;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
-  background:var(--inputBg);border:1px solid var(--inputBorder);transition:all .18s;
+  background:var(--inputBg);border:1px solid var(--inputBorder);transition:all .06s;
 }
-.btn-gear svg{stroke:var(--gearStroke);stroke-width:2.3;transition:stroke .3s;}
+.btn-gear svg{stroke:var(--gearStroke);stroke-width:2.3;transition:stroke .06s;}
 .btn-gear.active,.btn-gear:hover{background:var(--accentGlow,rgba(123,87,255,.16));border-color:var(--accentPrimary,rgba(123,87,255,.42));box-shadow:0 0 0 3px var(--accentGlow,rgba(123,87,255,.14));}
 .btn-new.nav-focus,.btn-gear.nav-focus,#search.nav-focus{
   box-shadow:0 0 0 3px var(--accentGlow,rgba(123,87,255,.22))!important;
@@ -1544,7 +1786,7 @@ body.dark .logo-name,body.night .logo-name{color:#eaf0ff;}
 
 /* ── ROW ── */
 .row-wrap{
-  display:flex;align-items:stretch;gap:6px;transition:opacity .15s;
+  display:flex;align-items:stretch;gap:6px;transition:opacity .08s;
   height:calc((100vh - 64px - 20px - 16px) / 3);
   min-height:126px;
 }
@@ -1560,7 +1802,7 @@ body.dark .logo-name,body.night .logo-name{color:#eaf0ff;}
   border-radius:18px;padding:8px 40px 8px 10px;
   display:flex;flex-direction:row;flex-wrap:nowrap;gap:8px;align-items:stretch;
   overflow:hidden;
-  transition:border-color .14s,background .14s,box-shadow .12s;
+  transition:border-color .06s,background .06s,box-shadow .06s;
   backdrop-filter:blur(12px);
   box-shadow:0 4px 18px rgba(0,0,0,.12);
 }
@@ -1570,17 +1812,26 @@ body.dark .logo-name,body.night .logo-name{color:#eaf0ff;}
   position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:50%;
   background:var(--inputBg);border:1px solid var(--inputBorder);
   color:var(--textDim);cursor:pointer;display:flex;align-items:center;justify-content:center;
-  z-index:12;font-size:15px;font-weight:700;line-height:1;transition:all .15s;
+  z-index:12;font-size:15px;font-weight:700;line-height:1;transition:all .05s;
   box-shadow:0 4px 10px rgba(109,122,156,.2);
 }
 .row-del:hover{background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.4);color:#c33232;}
+.row-pin{
+  position:absolute;top:34px;right:8px;width:22px;height:22px;border-radius:50%;
+  background:var(--inputBg);border:1px solid var(--inputBorder);
+  color:var(--textDim);cursor:pointer;display:flex;align-items:center;justify-content:center;
+  z-index:12;font-size:12px;line-height:1;transition:all .05s;
+  box-shadow:0 4px 10px rgba(109,122,156,.2);
+}
+.row-pin.active{background:rgba(109,40,217,.2);border-color:rgba(139,92,246,.55);color:var(--accentPrimary);}
+.row-pin:hover{border-color:rgba(139,92,246,.55);color:var(--text);}
 
 /* ── CARD ── */
 .card{
   flex:1 1 0;min-width:0;max-width:none;aspect-ratio:auto;height:100%;position:relative;
   background:var(--cardBg);border:1px solid var(--cardBorder);border-radius:14px;
   padding:9px 10px 34px;display:flex;flex-direction:column;justify-content:space-between;
-  overflow:hidden;transition:all .08s linear;cursor:pointer;
+  overflow:hidden;transition:all .05s linear;cursor:pointer;
 }
 .card:hover{
   border-color:var(--accentPrimary,rgba(123,87,255,.55));background:rgba(123,87,255,.08);
@@ -1607,7 +1858,7 @@ body.dark .logo-name,body.night .logo-name{color:#eaf0ff;}
   display:flex;gap:5px;justify-content:flex-end;flex-shrink:0;
   position:absolute;right:6px;bottom:6px;z-index:6;
   background:var(--inputBg);border:1px solid var(--inputBorder);border-radius:8px;padding:2px;
-  opacity:0;visibility:hidden;transform:translateY(3px);transition:opacity .05s linear,transform .05s linear;pointer-events:none;
+  opacity:0;visibility:hidden;transform:translateY(3px);transition:opacity .03s linear,transform .03s linear;pointer-events:none;
 }
 .card:hover .card-actions,.card.editing .card-actions{
   opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto;
@@ -1622,7 +1873,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .cbtn{
   width:22px;height:22px;border-radius:6px;padding:0;flex-shrink:0;
   cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;
-  transition:all .08s linear;background:var(--cardBg);border:1px solid var(--cardBorder);color:var(--textDim);
+  transition:all .04s linear;background:var(--cardBg);border:1px solid var(--cardBorder);color:var(--textDim);
 }
 .cbtn:hover{background:var(--inputBg);border-color:rgba(123,87,255,.5);color:var(--text);}
 .cbtn.active{background:rgba(109,40,217,.22);border-color:rgba(139,92,246,.5);color:var(--accentPrimary,#a78bfa);}
@@ -1635,12 +1886,12 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
   flex:1 1 0;min-width:0;max-width:none;aspect-ratio:auto;height:100%;cursor:pointer;
   background:rgba(123,87,255,.03);border:1.5px dashed rgba(123,87,255,.28);
   border-radius:11px;display:flex;flex-direction:column;align-items:center;
-  justify-content:center;gap:3px;color:#8b7fc0;font-size:15px;font-family:inherit;transition:all .16s;
+  justify-content:center;gap:3px;color:#8b7fc0;font-size:15px;font-family:inherit;transition:all .06s;
 }
 .card-add:hover{background:rgba(123,87,255,.11);border-color:rgba(123,87,255,.5);}
 
 /* ── SETTINGS ── */
-#settings{position:fixed;top:0;right:0;bottom:0;width:280px;background:var(--panelBg);border-left:1px solid var(--panelBorder);z-index:500;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.3);animation:slideIn .14s ease;backdrop-filter:none;}
+#settings{position:fixed;top:0;right:0;bottom:0;width:280px;background:var(--panelBg);border-left:1px solid var(--panelBorder);z-index:500;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.3);animation:slideIn .08s ease;backdrop-filter:none;}
 #settings-backdrop{position:fixed;inset:0;z-index:499;background:rgba(10,15,30,.14);}
 .settings-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid var(--navBorder);}
 .settings-title{font-size:20px;font-weight:700;}
@@ -1649,7 +1900,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .settings-section{margin-bottom:20px;}
 .s-title{font-size:13px;color:var(--sectionLabel);font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:9px;}
 .theme-grid{display:flex;gap:7px;}
-.theme-btn{flex:1;padding:9px 6px;border-radius:9px;cursor:pointer;border:2px solid var(--inputBorder);background:var(--inputBg);transition:all .16s;display:flex;flex-direction:column;align-items:center;gap:4px;}
+.theme-btn{flex:1;padding:9px 6px;border-radius:9px;cursor:pointer;border:2px solid var(--inputBorder);background:var(--inputBg);transition:all .08s;display:flex;flex-direction:column;align-items:center;gap:4px;}
 .theme-btn.active{border-color:rgba(139,92,246,.7);background:rgba(109,40,217,.14);}
 .theme-swatch{width:26px;height:26px;border-radius:7px;border:1px solid rgba(139,92,246,.25);}
 .theme-label{font-size:15px;font-weight:500;color:var(--textDim);}
@@ -1667,9 +1918,9 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .toggle-info{flex:1;}
 .toggle-label{font-size:18px;font-weight:500;}
 .toggle-sub{font-size:15px;color:var(--textMuted);margin-top:1px;}
-.toggle-switch{width:36px;height:19px;border-radius:10px;position:relative;cursor:pointer;background:rgba(128,128,128,.22);border:1px solid rgba(128,128,128,.28);transition:all .2s;flex-shrink:0;}
+.toggle-switch{width:36px;height:19px;border-radius:10px;position:relative;cursor:pointer;background:rgba(128,128,128,.22);border:1px solid rgba(128,128,128,.28);transition:all .08s;flex-shrink:0;}
 .toggle-switch.on{background:rgba(109,40,217,.75);border-color:rgba(139,92,246,.6);}
-.toggle-thumb{position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:rgba(200,200,200,.8);transition:all .2s;}
+.toggle-thumb{position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:rgba(200,200,200,.8);transition:all .08s;}
 .toggle-switch.on .toggle-thumb{left:17px;background:#fff;box-shadow:0 0 5px rgba(168,85,247,.55);}
 .history-list{background:var(--inputBg);border:1px solid var(--inputBorder);border-radius:9px;overflow:hidden;}
 .hist-item{width:100%;background:transparent;border:none;border-bottom:1px solid var(--navBorder);padding:7px 11px;text-align:left;color:var(--text);font-size:14px;cursor:pointer;font-family:'Cascadia Code','Cascadia Mono',Consolas,'Courier New',monospace;display:flex;justify-content:space-between;align-items:center;gap:7px;}
@@ -1678,8 +1929,32 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .hist-item-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
 .hist-empty{padding:10px 12px;font-size:15px;color:var(--textMuted);font-style:italic;}
 .hist-clear{margin-top:5px;background:none;border:none;color:var(--textMuted);font-size:15px;cursor:pointer;font-family:inherit;}
-.action-btn{width:100%;padding:7px 11px;border-radius:7px;cursor:pointer;background:rgba(128,128,128,.05);border:1px solid var(--inputBorder);color:var(--textDim);font-size:16px;font-family:inherit;font-weight:500;text-align:left;transition:all .14s;display:flex;align-items:center;gap:7px;margin-bottom:5px;}
+.action-btn{width:100%;padding:7px 11px;border-radius:7px;cursor:pointer;background:rgba(128,128,128,.05);border:1px solid var(--inputBorder);color:var(--textDim);font-size:16px;font-family:inherit;font-weight:500;text-align:left;transition:all .08s;display:flex;align-items:center;gap:7px;margin-bottom:5px;}
 .action-btn:hover{background:rgba(128,128,128,.11);}
+.pill-group{display:flex;gap:6px;flex-wrap:wrap;}
+.pill-btn{
+  min-width:66px;padding:7px 10px;border-radius:999px;cursor:pointer;
+  border:1px solid var(--inputBorder);background:var(--inputBg);color:var(--textDim);
+  font-size:13px;font-weight:600;transition:all .08s;
+}
+.pill-btn.active{background:rgba(109,40,217,.2);border-color:rgba(139,92,246,.55);color:var(--text);}
+.range-row{display:flex;align-items:center;gap:10px;}
+.range-slider{
+  flex:1;appearance:none;height:6px;border-radius:999px;background:var(--inputBg);
+  border:1px solid var(--inputBorder);outline:none;
+}
+.range-slider::-webkit-slider-thumb{
+  appearance:none;width:16px;height:16px;border-radius:50%;
+  background:var(--accentPrimary);border:none;cursor:pointer;
+}
+.range-val{min-width:42px;text-align:right;color:var(--textDim);font-size:13px;font-weight:600;}
+.small-search{
+  width:100%;height:32px;border-radius:999px;border:1px solid var(--inputBorder);
+  background:var(--inputBg);color:var(--text);padding:0 12px;font-size:13px;outline:none;margin:8px 0;
+}
+.small-search:focus{border-color:var(--accentPrimary,rgba(123,87,255,.45));box-shadow:0 0 0 2px var(--accentGlow,rgba(123,87,255,.12));}
+.backup-status{font-size:13px;color:var(--textMuted);margin-bottom:8px;}
+.danger-btn{border-color:rgba(239,68,68,.45)!important;color:#ef4444!important;}
 
 /* ── TOAST ── */
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:7px 20px;border-radius:100px;font-size:16px;font-weight:500;box-shadow:0 6px 24px rgba(0,0,0,.3);z-index:999;white-space:nowrap;animation:fadeUp .18s ease;pointer-events:none;display:none;}
@@ -1730,7 +2005,20 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
   <div class="settings-body">
 
     <div class="settings-section">
-      <div class="s-title">Theme</div>
+      <div class="s-title">General</div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Launch at Windows startup</div>
+          <div class="toggle-sub">Start Clippy automatically after login</div>
+        </div>
+        <div class="toggle-switch on" id="startup-toggle" tabindex="0" onclick="toggleStartup()">
+          <div class="toggle-thumb"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="s-title">Display</div>
       <div class="theme-grid">
         <button class="theme-btn" id="theme-night" onclick="setTheme('night')">
           <div class="theme-swatch" style="background:linear-gradient(135deg,#090e1a,#1a2544)"></div>
@@ -1740,6 +2028,31 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
           <div class="theme-swatch" style="background:linear-gradient(135deg,#f8fbff,#eef3ff,#f7f2ff)"></div>
           <span class="theme-label">Daylight</span>
         </button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="s-title">Capture</div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Auto-capture</div>
+          <div class="toggle-sub">Reads clipboard at selected speed</div>
+        </div>
+        <div class="toggle-switch on" id="auto-toggle" tabindex="0" onclick="toggleCapture()">
+          <div class="toggle-thumb"></div>
+        </div>
+      </div>
+      <div class="toggle-sub" style="margin-bottom:6px">Capture speed</div>
+      <div class="pill-group">
+        <button class="pill-btn" id="poll-250" onclick="setPollRate(250)">Fast · 250ms</button>
+        <button class="pill-btn active" id="poll-500" onclick="setPollRate(500)">Normal · 500ms</button>
+        <button class="pill-btn" id="poll-1000" onclick="setPollRate(1000)">Relaxed · 1000ms</button>
+      </div>
+      <div style="height:10px"></div>
+      <div class="toggle-sub" style="margin-bottom:6px">Paste format</div>
+      <div class="pill-group">
+        <button class="pill-btn active" id="paste-plain" onclick="setPasteMode(true)">Plain text only</button>
+        <button class="pill-btn" id="paste-rich" onclick="setPasteMode(false)">Preserve formatting</button>
       </div>
     </div>
 
@@ -1754,42 +2067,43 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
     </div>
 
     <div class="settings-section">
-      <div class="s-title">Capture</div>
-      <div class="toggle-row">
-        <div class="toggle-info">
-          <div class="toggle-label">Auto-capture</div>
-          <div class="toggle-sub">Reads clipboard every 500ms</div>
-        </div>
-        <div class="toggle-switch on" id="auto-toggle" tabindex="0" onclick="toggleCapture()">
-          <div class="toggle-thumb"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-section">
       <div class="s-title">Paste History</div>
       <div class="toggle-row">
         <div class="toggle-info">
           <div class="toggle-label">Record history</div>
-          <div class="toggle-sub">Save last 5 captured items</div>
+          <div class="toggle-sub">Save captured items for quick reuse</div>
         </div>
         <div class="toggle-switch on" id="hist-toggle" tabindex="0" onclick="toggleHistory()">
           <div class="toggle-thumb"></div>
         </div>
       </div>
+      <div class="toggle-sub" style="margin-bottom:6px">History size</div>
+      <div class="pill-group" style="margin-bottom:8px">
+        <button class="pill-btn" id="hist-limit-5" onclick="setHistoryLimit(5)">5</button>
+        <button class="pill-btn active" id="hist-limit-10" onclick="setHistoryLimit(10)">10</button>
+        <button class="pill-btn" id="hist-limit-20" onclick="setHistoryLimit(20)">20</button>
+        <button class="pill-btn" id="hist-limit-50" onclick="setHistoryLimit(50)">50</button>
+      </div>
+      <input id="history-search" class="small-search" placeholder="Search history..." oninput="onHistorySearch(this.value)" />
       <div id="history-section">
         <div class="history-list" id="history-list"><div class="hist-empty">Nothing captured yet</div></div>
         <button class="hist-clear" id="hist-clear" style="display:none" onclick="clearHistory()">Clear history</button>
       </div>
     </div>
 
-    <!-- FIX #3: AI Smart Group section REMOVED -->
+    <div class="settings-section">
+      <div class="s-title">Backup</div>
+      <div class="backup-status" id="backup-status">Last backup: Never</div>
+      <button class="action-btn" onclick="bridge.openBackupFolder()">Open Backup Folder</button>
+      <button class="action-btn" onclick="bridge.backupNow()">Backup Now</button>
+    </div>
 
     <div class="settings-section">
       <div class="s-title">Data</div>
       <button class="action-btn" onclick="bridge.exportJSON()">⬇ Export JSON</button>
       <button class="action-btn" onclick="bridge.exportCSV()">⬇ Export CSV</button>
       <button class="action-btn" onclick="bridge.importJSON()">⬆ Import JSON</button>
+      <button class="action-btn" id="clear-all-btn" onclick="clearAllDataConfirm()">Clear All Data</button>
     </div>
 
   </div>
@@ -1803,12 +2117,17 @@ let bridge = null;
 let rows = [], cursor = {row_idx:0,entry_idx:0};
 let autoCapture = true, history = [], histEnabled = true;
 let hotkey = 'ctrl+d';
+let pollRate = 500, pastePlainText = true;
+let launchAtStartup = true, historyLimit = 10, lastBackup = '';
+let historySearch = '';
 let hotkeyCaptureArmed = false;
 let editingId = null, kbIdx = -1, searchTerm = '';
 let settingsOpen = false, dragCard = null, dragRow = null;
 let userTargetId = null;
 let settingsNavIdx = -1;
 let topNavIdx = -1;
+let clearAllConfirmTimer = null;
+let clearAllArmed = false;
 
 // Colors match mockups: violet, sky-blue, teal, coral, amber
 const TAG_CYCLE = [
@@ -1873,6 +2192,11 @@ function applyState(d) {
   history     = d.history     || [];
   histEnabled = d.hist_enabled ?? true;
   hotkey      = (d.hotkey || 'ctrl+d').toLowerCase();
+  pollRate    = d.poll_rate ?? 500;
+  pastePlainText = d.paste_plain_text ?? true;
+  launchAtStartup = d.launch_at_startup ?? true;
+  historyLimit = d.history_limit ?? 10;
+  lastBackup = d.last_backup || '';
   // Restore persisted theme — use _applyThemeUI (DOM only) so we never call
   // bridge.setTheme() here, which would trigger save() → _push() → applyState
   // again — an infinite loop that was causing Clippy to freeze.
@@ -1970,7 +2294,14 @@ function heatBar(count) {
 function _buildVisible() {
   // Single authoritative sort+filter used by both renderAll and flatEntries.
   // Returns {sorted, visible} so callers can share the same arrays.
-  const sorted = rows.map(r=>({...r,entries:[...r.entries].sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0))}));
+  const sorted = rows
+    .map((r,i)=>({...r,__idx:i,entries:[...r.entries].sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0))}))
+    .sort((a,b)=>{
+      const ap = a.pinned ? 1 : 0;
+      const bp = b.pinned ? 1 : 0;
+      if (bp !== ap) return bp - ap;
+      return a.__idx - b.__idx;
+    });
   const visible = searchTerm
     ? sorted.filter(r=>r.entries.some(e=>e.text&&e.text.toLowerCase().includes(searchTerm)))
     : sorted;
@@ -2004,10 +2335,10 @@ function renderAll() {
     return;
   }
 
-  main.innerHTML = visible.map(row => {
-    const realIdx   = rows.findIndex(r=>r.id===row.id);
-    const isActiveRow = realIdx===cursor.row_idx && autoCapture;
-    const t         = tag(row.color_idx??realIdx);
+  main.innerHTML = visible.map((row, visIdx) => {
+    const stateIdx  = rows.findIndex(r=>r.id===row.id);
+    const isActiveRow = stateIdx===cursor.row_idx && autoCapture;
+    const t         = tag(row.color_idx??stateIdx);
     const hasMatch  = searchTerm && row.entries.some(e=>e.text.toLowerCase().includes(searchTerm));
 
     const cards = row.entries.map(entry => {
@@ -2042,7 +2373,7 @@ function renderAll() {
             <button class="save-btn" onclick="saveCard('${entry.id}')">✓ Save</button>
           </div>`;
       } else {
-        body = `<div style="flex:1;overflow:hidden;padding-left:${isKb?6:0}px;transition:padding .13s">
+        body = `<div style="flex:1;overflow:hidden;padding-left:${isKb?6:0}px;transition:padding .05s">
             <div class="card-text${isCode?' code-font':''}">${highlight(entry.text,searchTerm)}</div>
           </div>
           <div class="card-actions">
@@ -2074,9 +2405,10 @@ function renderAll() {
       ondragover="onRowDragOver(event,'${row.id}')"
       ondrop="onRowDrop(event,'${row.id}')"
       ondragend="onRowDragEnd()">
-      <span class="row-num${isActiveRow?' active':''}" style="${isActiveRow?'':'color:'+t.num}">${realIdx+1}</span>
+      <span class="row-num${isActiveRow?' active':''}" style="${isActiveRow?'':'color:'+t.num}">${visIdx+1}</span>
       <div class="row-group${isActiveRow?' active-capture':''}${hasMatch?' search-match':''}" style="border-color:${t.border}">
         <button class="row-del" onclick="delRow('${row.id}')">✕</button>
+        <button class="row-pin${row.pinned ? ' active' : ''}" onclick="bridge.pinRow('${row.id}')">📌</button>
         ${cards}${addCard}
       </div>
     </div>`;
@@ -2133,7 +2465,7 @@ function addRow(){
     // and may be off-screen if the list is long.
     requestAnimationFrame(function() {
       const el = document.getElementById('rowwrap-' + d.new_row_id);
-      if (el) el.scrollIntoView({block:'nearest', behavior:'smooth'});
+      if (el) el.scrollIntoView({block:'nearest', behavior:'auto'});
     });
   });
 }
@@ -2180,10 +2512,13 @@ function _settingsNavItems() {
   return Array.from(document.querySelectorAll(
     '#settings .settings-close, ' +
     '#settings .theme-btn, ' +
+    '#settings #startup-toggle, ' +
     '#settings #hotkey-save, ' +
     '#settings #hotkey-reset, ' +
     '#settings #auto-toggle, ' +
     '#settings #hist-toggle, ' +
+    '#settings .pill-btn, ' +
+    '#settings #history-search, ' +
     '#settings #hist-clear, ' +
     '#settings .hist-item, ' +
     '#settings .action-btn'
@@ -2200,7 +2535,7 @@ function _focusSettingsItem(idx) {
   settingsNavIdx = ((idx % n) + n) % n;
   const el = items[settingsNavIdx];
   if (typeof el.focus === 'function') el.focus({preventScroll:true});
-  el.scrollIntoView({block:'nearest', inline:'nearest', behavior:'smooth'});
+  el.scrollIntoView({block:'nearest', inline:'nearest', behavior:'auto'});
 }
 
 function _topNavItems() {
@@ -2329,10 +2664,10 @@ document.addEventListener('keydown', e => {
     // For vertical row jumps, align the row cleanly with the top edge.
     // This avoids the "90% visible" stuck state when navigating upward.
     if (block === 'start' && rowEl) {
-      rowEl.scrollIntoView({block:'start', inline:'nearest', behavior:'smooth'});
+      rowEl.scrollIntoView({block:'start', inline:'nearest', behavior:'auto'});
       return;
     }
-    cardEl?.scrollIntoView({block, inline:'nearest', behavior:'smooth'});
+    cardEl?.scrollIntoView({block, inline:'nearest', behavior:'auto'});
   };
 
   if (e.key==='Escape') {
@@ -2417,11 +2752,34 @@ function closeSettings(){
   document.getElementById('settings').style.display='none';
   document.getElementById('settings-backdrop').style.display='none';
   document.getElementById('gear-btn').classList.remove('active');
+  const btn = document.getElementById('clear-all-btn');
+  if (btn) {
+    clearAllArmed = false;
+    clearTimeout(clearAllConfirmTimer);
+    btn.textContent = 'Clear All Data';
+    btn.classList.remove('danger-btn');
+  }
 }
 
 function updateSettings(){
+  document.getElementById('startup-toggle').classList.toggle('on',launchAtStartup);
   document.getElementById('auto-toggle').classList.toggle('on',autoCapture);
   document.getElementById('hist-toggle').classList.toggle('on',histEnabled);
+
+  [250, 500, 1000].forEach(ms => {
+    document.getElementById(`poll-${ms}`)?.classList.toggle('active', pollRate === ms);
+  });
+  document.getElementById('paste-plain')?.classList.toggle('active', !!pastePlainText);
+  document.getElementById('paste-rich')?.classList.toggle('active', !pastePlainText);
+  [5, 10, 20, 50].forEach(lim => {
+    document.getElementById(`hist-limit-${lim}`)?.classList.toggle('active', historyLimit === lim);
+  });
+
+  const backupStatus = document.getElementById('backup-status');
+  if (backupStatus) {
+    backupStatus.textContent = `Last backup: ${lastBackup || 'Never'}`;
+  }
+
   const hk = document.getElementById('hotkey-input');
   if (hk) {
     hk.value = formatHotkey(hotkey);
@@ -2430,11 +2788,14 @@ function updateSettings(){
   document.getElementById('history-section').style.opacity=histEnabled?'1':'0.45';
   const hl=document.getElementById('history-list');
   const hc=document.getElementById('hist-clear');
-  if (!histEnabled||history.length===0){
+  const histFiltered = (history || [])
+    .filter(item => !historySearch || item.toLowerCase().includes(historySearch))
+    .slice(0, historyLimit);
+  if (!histEnabled||histFiltered.length===0){
     hl.innerHTML=`<div class="hist-empty">${histEnabled?'Nothing captured yet':'History is off'}</div>`;
     hc.style.display='none';
   } else {
-    hl.innerHTML=history.map(item=>`<button class="hist-item" onclick="copyCard('__hist__','${escAttr(item)}')"><span class="hist-item-text">${escHtml(item)}</span><span style="font-size:9px;color:var(--textMuted)">copy</span></button>`).join('');
+    hl.innerHTML=histFiltered.map(item=>`<button class="hist-item" onclick="copyCard('__hist__','${escAttr(item)}')"><span class="hist-item-text">${escHtml(item)}</span><span style="font-size:9px;color:var(--textMuted)">copy</span></button>`).join('');
     hc.style.display='block';
   }
 }
@@ -2516,6 +2877,61 @@ function resetHotkey(){
   saveHotkey();
 }
 
+function toggleStartup(){
+  launchAtStartup = !launchAtStartup;
+  bridge.setLaunchAtStartup(launchAtStartup);
+  showToast(launchAtStartup ? 'Startup enabled' : 'Startup disabled', 'ok');
+  updateSettings();
+}
+
+function setPollRate(ms){
+  pollRate = ms;
+  bridge.setPollRate(ms);
+  showToast(`Capture speed set to ${ms}ms`, 'ok');
+  updateSettings();
+}
+
+function setPasteMode(plain){
+  pastePlainText = !!plain;
+  bridge.setPastePlainText(pastePlainText);
+  showToast(pastePlainText ? 'Paste mode: plain text' : 'Paste mode: preserve formatting', 'ok');
+  updateSettings();
+}
+
+function setHistoryLimit(limit){
+  historyLimit = limit;
+  bridge.setHistoryLimit(limit);
+  showToast(`History size set to ${limit}`, 'ok');
+  updateSettings();
+}
+
+function onHistorySearch(value){
+  historySearch = (value || '').trim().toLowerCase();
+  updateSettings();
+}
+
+function clearAllDataConfirm(){
+  const btn = document.getElementById('clear-all-btn');
+  if (!btn) return;
+  if (!clearAllArmed){
+    clearAllArmed = true;
+    btn.textContent = 'Tap again to confirm';
+    btn.classList.add('danger-btn');
+    clearTimeout(clearAllConfirmTimer);
+    clearAllConfirmTimer = setTimeout(()=>{
+      clearAllArmed = false;
+      btn.textContent = 'Clear All Data';
+      btn.classList.remove('danger-btn');
+    }, 3000);
+    return;
+  }
+  clearTimeout(clearAllConfirmTimer);
+  clearAllArmed = false;
+  btn.textContent = 'Clear All Data';
+  btn.classList.remove('danger-btn');
+  bridge.clearAllData();
+}
+
 function toggleCapture(){
   autoCapture=!autoCapture;
   bridge.setAutoCapture(autoCapture);
@@ -2563,8 +2979,12 @@ if __name__ == "__main__":
                      args.thread.name if args.thread else "?", msg)
     threading.excepthook = _thread_excepthook
 
-    # Register auto-start BEFORE Qt starts (no Qt objects needed)
-    _ensure_startup()
+    # Load persisted settings before startup registration so the user's
+    # Launch-at-startup preference is respected on every app run.
+    load()
+    with _state_lock:
+        launch_on_login = bool(state.get("launch_at_startup", True))
+    _set_launch_at_startup(launch_on_login)
 
     # MUST be set before QApplication() — Qt reads these flags during
     # GPU process initialisation which happens inside QApplication.__init__.
