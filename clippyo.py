@@ -926,9 +926,9 @@ class ClippyWindow(QMainWindow):
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
         self.setWindowTitle("Clippy")
 
-        W, H = 640, 460
+        W, H = 760, 680
         self.resize(W, H)
-        self.setMinimumSize(500, 380)
+        self.setMinimumSize(700, 580)
 
         self._icon = make_icon(64)
         self.setWindowIcon(self._icon)
@@ -1462,12 +1462,12 @@ body.night::after,body.dark::after{
 /* FIX #5: new logo mark — small pill with icon */
 .logo{display:flex;align-items:center;gap:8px;flex-shrink:0;text-decoration:none;}
 .logo-mark{
-  width:34px;height:34px;border-radius:10px;flex-shrink:0;
-  background:linear-gradient(140deg,#fef2e1 0%,#ffe2b8 55%,#fff1e3 100%);
+  width:46px;height:38px;border-radius:0;flex-shrink:0;
+  background:transparent;
   display:flex;align-items:center;justify-content:center;
-  box-shadow:0 6px 14px rgba(86,108,155,.24);
+  box-shadow:none;
 }
-.logo-mark svg{display:block;width:18px;height:18px;}
+.logo-mark svg{display:block;width:44px;height:34px;}
 .logo-name{
   font-weight:700;font-size:32px;letter-spacing:-.3px;
   color:#695ad6;
@@ -1477,9 +1477,9 @@ body.night::after,body.dark::after{
 .search-wrap{flex:1;position:relative;}
 .search-wrap svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--textMuted);}
 #search{
-  width:100%;padding:9px 30px 9px 28px;
+  width:100%;padding:10px 30px 10px 28px;
   background:var(--inputBg);border:1px solid var(--inputBorder);border-radius:100px;
-  color:var(--text);font-size:16px;outline:none;font-family:inherit;transition:border-color .2s,box-shadow .2s;
+  color:var(--text);font-size:17px;outline:none;font-family:inherit;transition:border-color .2s,box-shadow .2s;
 }
 #search:focus{border-color:rgba(123,87,255,.45);box-shadow:0 0 0 3px rgba(123,87,255,.12);}
 .search-clear{position:absolute;right:9px;top:50%;transform:translateY(-50%);
@@ -1487,14 +1487,14 @@ body.night::after,body.dark::after{
 
 .btn-new{
   flex-shrink:0;background:linear-gradient(135deg,#6d4bff,#8968ff);
-  border:none;border-radius:11px;color:#fff;padding:8px 14px;
-  font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;
+  border:none;border-radius:12px;color:#fff;padding:10px 16px;
+  font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;
   box-shadow:0 10px 18px rgba(109,75,255,.28);display:flex;align-items:center;gap:4px;transition:opacity .15s,transform .15s;
 }
 .btn-new:hover{opacity:.94;transform:translateY(-1px);}
 
 .btn-gear{
-  flex-shrink:0;width:35px;height:35px;border-radius:11px;cursor:pointer;
+  flex-shrink:0;width:34px;height:38px;border-radius:10px;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
   background:var(--inputBg);border:1px solid var(--inputBorder);transition:all .18s;
 }
@@ -1672,14 +1672,16 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
   <!-- FIX #5: new logo -->
   <div class="logo">
     <div class="logo-mark">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <g transform="rotate(-12 8 8)">
-          <rect x="8.2" y="1.8" width="5.6" height="7.6" rx="1.2" fill="#F7C54A" stroke="#5A429B" stroke-width="1.2"/>
-          <rect x="10.1" y="0.5" width="2.3" height="1.2" rx="0.6" fill="#E9EEFF" stroke="#5A429B" stroke-width="1.05"/>
+      <svg width="44" height="34" viewBox="0 0 52 38" fill="none">
+        <g transform="rotate(-12 30 18)">
+          <rect x="24" y="4" width="16" height="20" rx="4" fill="#F7C54A" stroke="#5A429B" stroke-width="1.8"/>
+          <rect x="29" y="2" width="7" height="3.5" rx="1.7" fill="#E9EEFF" stroke="#5A429B" stroke-width="1.5"/>
         </g>
-        <circle cx="6.1" cy="8.1" r="4.45" fill="#F6C648" stroke="#3F6C9B" stroke-width="1.4"/>
-        <path d="M3.5 8.1c0-1.7 1.3-3 3-3 1.7 0 3 1.2 3 2.9" stroke="#3F6C9B" stroke-width="1.25" stroke-linecap="round"/>
-        <path d="M8.8 8.1l1.7 .8-.8 1.8" stroke="#3F6C9B" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="15.8" cy="19.2" r="10.5" fill="#F6C648" stroke="#3F6C9B" stroke-width="2.2"/>
+        <path d="M9.6 19.2c0-3.8 2.9-6.6 6.8-6.6 3.8 0 6.6 2.6 6.6 6.5" stroke="#3F6C9B" stroke-width="2" stroke-linecap="round"/>
+        <path d="M22 19.1l4 1.9-1.9 4.1" stroke="#3F6C9B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="42.6" cy="18.1" r="1.5" fill="#5A429B"/>
+        <circle cx="45.7" cy="15.7" r="1.2" fill="#5A429B"/>
       </svg>
     </div>
     <span class="logo-name">Clippy</span>
