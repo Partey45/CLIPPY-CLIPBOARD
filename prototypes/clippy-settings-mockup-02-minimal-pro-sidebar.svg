@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="340" height="760" viewBox="0 0 340 760">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f6f8fc"/>
+      <stop offset="100%" stop-color="#edf1f8"/>
+    </linearGradient>
+  </defs>
+  <rect width="340" height="760" rx="18" fill="url(#bg2)"/>
+  <rect x="0" y="0" width="340" height="84" rx="18" fill="#ffffff"/>
+  <text x="24" y="50" font-size="36" font-family="Segoe UI, Arial" font-weight="700" fill="#252a50">Settings</text>
+  <circle cx="304" cy="42" r="16" fill="#f1f4fb"/>
+  <text x="304" y="48" text-anchor="middle" font-size="24" font-family="Segoe UI, Arial" font-weight="700" fill="#94a0c4">×</text>
+  <line x1="0" y1="84" x2="340" y2="84" stroke="#d8deef"/>
+
+  <rect x="20" y="110" width="300" height="620" rx="16" fill="#ffffff" stroke="#d7dff2"/>
+  <rect x="20" y="110" width="6" height="620" rx="3" fill="#6d5efc"/>
+
+  <text x="40" y="148" font-size="15" font-family="Segoe UI, Arial" font-weight="700" letter-spacing="1.5" fill="#7f8db4">GENERAL</text>
+  <text x="40" y="180" font-size="19" font-family="Segoe UI, Arial" font-weight="700" fill="#2f3564">Launch at Windows startup</text>
+  <text x="40" y="205" font-size="14" font-family="Segoe UI, Arial" fill="#8a95ba">Start automatically after login</text>
+  <rect x="258" y="170" width="48" height="26" rx="13" fill="#6d5efc"/>
+  <circle cx="289" cy="183" r="10" fill="#fff"/>
+
+  <line x1="36" y1="228" x2="306" y2="228" stroke="#e8ecf7"/>
+  <text x="40" y="258" font-size="15" font-family="Segoe UI, Arial" font-weight="700" letter-spacing="1.5" fill="#7f8db4">DISPLAY</text>
+  <rect x="40" y="272" width="126" height="68" rx="10" fill="#f5f7fc" stroke="#d5ddf1"/>
+  <text x="103" y="315" text-anchor="middle" font-size="20" font-family="Segoe UI, Arial" font-weight="700" fill="#2d355c">Night</text>
+  <rect x="180" y="272" width="126" height="68" rx="10" fill="#efe9ff" stroke="#8b5cf6" stroke-width="2"/>
+  <text x="243" y="315" text-anchor="middle" font-size="20" font-family="Segoe UI, Arial" font-weight="700" fill="#6d5efc">Daylight</text>
+
+  <line x1="36" y1="360" x2="306" y2="360" stroke="#e8ecf7"/>
+  <text x="40" y="392" font-size="15" font-family="Segoe UI, Arial" font-weight="700" letter-spacing="1.5" fill="#7f8db4">CAPTURE</text>
+  <text x="40" y="424" font-size="19" font-family="Segoe UI, Arial" font-weight="700" fill="#2f3564">Capture speed</text>
+  <rect x="40" y="438" width="80" height="32" rx="16" fill="#f2f5fd" stroke="#cfdbfb"/>
+  <text x="80" y="459" text-anchor="middle" font-size="15" font-family="Segoe UI, Arial" font-weight="700" fill="#64729f">Fast</text>
+  <rect x="126" y="438" width="92" height="32" rx="16" fill="#ddd5ff" stroke="#8b5cf6"/>
+  <text x="172" y="459" text-anchor="middle" font-size="15" font-family="Segoe UI, Arial" font-weight="700" fill="#4f46e5">Normal</text>
+  <rect x="224" y="438" width="82" height="32" rx="16" fill="#f2f5fd" stroke="#cfdbfb"/>
+  <text x="265" y="459" text-anchor="middle" font-size="15" font-family="Segoe UI, Arial" font-weight="700" fill="#64729f">Relaxed</text>
+
+  <line x1="36" y1="494" x2="306" y2="494" stroke="#e8ecf7"/>
+  <text x="40" y="526" font-size="15" font-family="Segoe UI, Arial" font-weight="700" letter-spacing="1.5" fill="#7f8db4">DATA</text>
+  <rect x="40" y="542" width="266" height="48" rx="10" fill="#f7f9fe" stroke="#d3dcf2"/>
+  <text x="56" y="572" font-size="20" font-family="Segoe UI, Arial" font-weight="700" fill="#5a6699">Open Backup Folder</text>
+  <rect x="40" y="598" width="266" height="48" rx="10" fill="#fff6f6" stroke="#efb6b6"/>
+  <text x="56" y="628" font-size="20" font-family="Segoe UI, Arial" font-weight="700" fill="#c24141">Clear All Data</text>
+</svg>
