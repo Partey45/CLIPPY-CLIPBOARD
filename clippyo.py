@@ -1403,39 +1403,49 @@ body{background:var(--appBg);color:var(--text);transition:background .3s,color .
 
 /* ── NIGHT ── */
 body.dark,body.night{
-  --appBg:#0d0f1e;--navBg:rgba(18,20,40,1);--navBorder:rgba(139,92,246,.25);
-  --panelBg:#10132a;--panelBorder:rgba(139,92,246,.18);
-  --rowBg:rgba(255,255,255,.016);--rowBorder:rgba(255,255,255,.055);
-  --cardBg:rgba(255,255,255,.03);--cardBorder:rgba(255,255,255,.07);
-  --text:#ddd6f3;--textDim:#94a3b8;--textMuted:#3f4660;
-  --inputBg:rgba(255,255,255,.04);--inputBorder:rgba(255,255,255,.08);
-  --sectionLabel:#4b5280;--emptyText:#2a2f4a;
+  --appBg:linear-gradient(145deg,#090e1a 0%,#0d1426 100%);
+  --navBg:rgba(26,37,68,.92);--navBorder:rgba(56,76,120,.84);
+  --panelBg:#121c33;--panelBorder:rgba(56,76,120,.7);
+  --rowBg:rgba(15,24,47,.92);--rowBorder:rgba(50,79,124,.75);
+  --cardBg:rgba(23,34,63,.88);--cardBorder:rgba(53,74,116,.88);
+  --text:#edf2ff;--textDim:#b5c4e9;--textMuted:#7085b6;
+  --inputBg:rgba(20,31,58,.95);--inputBorder:rgba(52,74,116,.85);
+  --sectionLabel:#7d94c8;--emptyText:#536289;
   --toastBg:rgba(20,16,48,.98);--toastBorder:rgba(139,92,246,.45);
   --toastWarnBg:rgba(100,20,0,.95);--toastWarnBorder:rgba(251,113,133,.4);
-  --gearStroke:#c4b5e8;
+  --gearStroke:#b7c7ea;
 }
 /* ── DAYLIGHT ── */
 body.daylight{
-  --appBg:linear-gradient(135deg,#e9f3ff 0%,#f6f2ff 58%,#f2fff7 100%);
-  --navBg:rgba(255,255,255,.58);--navBorder:rgba(185,197,226,.72);
-  --panelBg:#f7fbff;--panelBorder:rgba(185,197,226,.92);
-  --rowBg:rgba(255,255,255,.50);--rowBorder:rgba(194,206,234,.92);
-  --cardBg:rgba(255,255,255,.82);--cardBorder:rgba(206,219,245,.95);
-  --text:#2f3252;--textDim:#677391;--textMuted:#8e99b1;
-  --inputBg:rgba(255,255,255,.80);--inputBorder:rgba(196,210,240,.96);
-  --sectionLabel:#8894ad;--emptyText:#9ba6c3;
+  --appBg:linear-gradient(135deg,#f8fbff 0%,#eef3ff 55%,#f7f2ff 100%);
+  --navBg:rgba(255,255,255,.82);--navBorder:rgba(208,217,242,.85);
+  --panelBg:#f8fbff;--panelBorder:rgba(196,210,240,.94);
+  --rowBg:rgba(255,255,255,.58);--rowBorder:rgba(212,221,245,.95);
+  --cardBg:rgba(255,255,255,.88);--cardBorder:rgba(214,224,246,.95);
+  --text:#2e2c55;--textDim:#66749a;--textMuted:#8f9ab4;
+  --inputBg:#f3f6ff;--inputBorder:rgba(198,212,241,.96);
+  --sectionLabel:#8390ac;--emptyText:#9ca9c8;
   --toastBg:rgba(255,255,255,.95);--toastBorder:rgba(123,87,255,.28);
   --toastWarnBg:rgba(255,244,230,.97);--toastWarnBorder:rgba(251,113,133,.4);
-  --gearStroke:#4a4f79;
+  --gearStroke:#626f97;
 }
 body.daylight::before,body.daylight::after{
-  content:"";position:fixed;border-radius:999px;pointer-events:none;z-index:0;filter:blur(1px);
+  content:"";position:fixed;border-radius:999px;pointer-events:none;z-index:0;filter:blur(2px);
 }
 body.daylight::before{
-  width:360px;height:360px;left:-90px;top:-120px;background:rgba(207,232,255,.65);
+  width:420px;height:420px;left:-130px;top:-150px;background:rgba(130,107,255,.22);
 }
 body.daylight::after{
-  width:400px;height:400px;right:-120px;bottom:-180px;background:rgba(216,255,226,.68);
+  width:460px;height:460px;right:-150px;bottom:-210px;background:rgba(42,198,216,.18);
+}
+body.night::before,body.night::after,body.dark::before,body.dark::after{
+  content:"";position:fixed;border-radius:999px;pointer-events:none;z-index:0;
+}
+body.night::before,body.dark::before{
+  width:430px;height:250px;left:-130px;top:-90px;background:radial-gradient(circle at center, rgba(118,100,255,.34), rgba(118,100,255,0));
+}
+body.night::after,body.dark::after{
+  width:520px;height:300px;right:-170px;bottom:-120px;background:radial-gradient(circle at center, rgba(0,201,214,.22), rgba(0,201,214,0));
 }
 
 /* ── NAV ── */
@@ -1443,7 +1453,7 @@ body.daylight::after{
   display:flex;align-items:center;padding:0 12px;height:58px;gap:10px;
   background:var(--navBg);border-bottom:1px solid var(--navBorder);
   position:relative;z-index:200;backdrop-filter:blur(16px);flex-shrink:0;
-  box-shadow:0 10px 30px rgba(120,138,182,.16);
+  box-shadow:0 10px 28px rgba(72,89,130,.18);
   border-top-left-radius:18px;border-top-right-radius:18px;
 }
 
@@ -1451,14 +1461,14 @@ body.daylight::after{
 .logo{display:flex;align-items:center;gap:8px;flex-shrink:0;text-decoration:none;}
 .logo-mark{
   width:30px;height:30px;border-radius:9px;flex-shrink:0;
-  background:linear-gradient(135deg,#6d4bff 0%,#7b57ff 55%,#8d6bff 100%);
+  background:linear-gradient(140deg,#fef2e1 0%,#ffe2b8 55%,#fff1e3 100%);
   display:flex;align-items:center;justify-content:center;
-  box-shadow:0 6px 14px rgba(109,75,255,.35);
+  box-shadow:0 6px 14px rgba(86,108,155,.24);
 }
 .logo-mark svg{display:block;}
 .logo-name{
   font-weight:700;font-size:22px;letter-spacing:-.3px;
-  color:#7b57ff;
+  color:#695ad6;
 }
 
 .search-wrap{flex:1;position:relative;}
@@ -1483,7 +1493,7 @@ body.daylight::after{
 .btn-gear{
   flex-shrink:0;width:35px;height:35px;border-radius:11px;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
-  background:rgba(255,255,255,.84);border:1px solid rgba(196,210,240,.96);transition:all .18s;
+  background:var(--inputBg);border:1px solid var(--inputBorder);transition:all .18s;
 }
 .btn-gear svg{stroke:var(--gearStroke);stroke-width:2.3;transition:stroke .3s;}
 .btn-gear.active,.btn-gear:hover{background:rgba(123,87,255,.16);border-color:rgba(123,87,255,.42);box-shadow:0 0 0 3px rgba(123,87,255,.14);}
@@ -1527,14 +1537,14 @@ body.daylight::after{
   overflow:hidden;
   transition:border-color .14s,background .14s,box-shadow .12s;
   backdrop-filter:blur(8px);
-  box-shadow:0 7px 22px rgba(125,140,185,.14);
+  box-shadow:0 7px 22px rgba(86,102,142,.18);
 }
 .row-group.active-capture{background:rgba(123,87,255,.08);border-color:rgba(123,87,255,.36);}
 .row-group.search-match{border-color:rgba(168,85,247,.45);}
 .row-del{
   position:absolute;top:8px;right:8px;width:15px;height:15px;border-radius:50%;
-  background:rgba(255,255,255,.9);border:1px solid rgba(198,208,232,.95);
-  color:#5d6786;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  background:var(--inputBg);border:1px solid var(--inputBorder);
+  color:var(--textDim);cursor:pointer;display:flex;align-items:center;justify-content:center;
   z-index:12;font-size:12px;font-weight:700;line-height:1;transition:all .15s;
   box-shadow:0 4px 10px rgba(109,122,156,.2);
 }
@@ -1571,7 +1581,7 @@ body.daylight::after{
 .card-actions{
   display:flex;gap:5px;justify-content:flex-end;flex-shrink:0;
   position:absolute;right:6px;bottom:6px;z-index:6;
-  background:rgba(255,255,255,.92);border:1px solid rgba(180,194,224,.92);border-radius:8px;padding:2px;
+  background:var(--inputBg);border:1px solid var(--inputBorder);border-radius:8px;padding:2px;
   opacity:0;visibility:hidden;transform:translateY(3px);transition:opacity .05s linear,transform .05s linear;pointer-events:none;
 }
 .card:hover .card-actions,.card.editing .card-actions{
@@ -1587,9 +1597,9 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .cbtn{
   width:22px;height:22px;border-radius:6px;padding:0;flex-shrink:0;
   cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;
-  transition:all .08s linear;background:rgba(255,255,255,.86);border:1px solid rgba(150,170,215,.92);color:#475477;
+  transition:all .08s linear;background:var(--cardBg);border:1px solid var(--cardBorder);color:var(--textDim);
 }
-.cbtn:hover{background:#ffffff;border-color:rgba(123,87,255,.5);color:#26345c;}
+.cbtn:hover{background:var(--inputBg);border-color:rgba(123,87,255,.5);color:var(--text);}
 .cbtn.active{background:rgba(109,40,217,.25);border-color:rgba(139,92,246,.5);color:#a78bfa;}
 .cbtn.danger{border-color:rgba(239,68,68,.18);color:#ef4444;}
 .cbtn.danger:hover{background:rgba(239,68,68,.2);border-color:rgba(239,68,68,.42);color:#f87171;}
@@ -1660,18 +1670,13 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
   <div class="logo">
     <div class="logo-mark">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="2.1" y="2.4" width="8.7" height="10.8" rx="1.6" fill="#FFE57C"/>
-        <path d="M9.1 2.4 L10.8 4.1 L9.1 4.1 Z" fill="#EBCB52"/>
-        <path d="M3.8 5.6H8.9" stroke="#9A7C2A" stroke-width="0.95" stroke-linecap="round"/>
-        <path d="M3.8 7.6H8.4" stroke="#9A7C2A" stroke-width="0.95" stroke-linecap="round"/>
-        <path d="M4.0 9.6 C5.1 8.9, 6.0 10.1, 7.0 9.5" stroke="#7A6120" stroke-width="0.8" fill="none" stroke-linecap="round"/>
-        <g transform="translate(6.1,8.5) rotate(-24)">
-          <rect x="0" y="0" width="6.2" height="1.25" rx="0.62" fill="#22365B"/>
-          <rect x="0.7" y="0.2" width="2.6" height="0.85" rx="0.42" fill="#9DB8F7" fill-opacity="0.85"/>
-          <polygon points="6.2,0 7.6,0.62 6.2,1.25" fill="#E8EDF9"/>
-          <polygon points="7.6,0.62 8.35,0.62 7.6,0.3" fill="#27324E"/>
-          <polygon points="7.6,0.62 8.35,0.62 7.6,0.95" fill="#27324E"/>
+        <g transform="rotate(-12 8 8)">
+          <rect x="8.2" y="1.8" width="5.6" height="7.6" rx="1.2" fill="#F7C54A" stroke="#5A429B" stroke-width="1.2"/>
+          <rect x="10.1" y="0.5" width="2.3" height="1.2" rx="0.6" fill="#E9EEFF" stroke="#5A429B" stroke-width="1.05"/>
         </g>
+        <circle cx="6.1" cy="8.1" r="4.45" fill="#F6C648" stroke="#3F6C9B" stroke-width="1.4"/>
+        <path d="M3.5 8.1c0-1.7 1.3-3 3-3 1.7 0 3 1.2 3 2.9" stroke="#3F6C9B" stroke-width="1.25" stroke-linecap="round"/>
+        <path d="M8.8 8.1l1.7 .8-.8 1.8" stroke="#3F6C9B" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </div>
     <span class="logo-name">Clippy</span>
