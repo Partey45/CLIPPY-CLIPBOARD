@@ -1823,13 +1823,14 @@ body.dark .logo-name,body.night .logo-name{color:#eaf0ff;}
 .row-num.active{color:var(--text);}
 .row-group{
   flex:1;position:relative;background:var(--rowBg);border:1px solid var(--rowBorder);
-  border-radius:18px;padding:8px 40px 8px 10px;
+  border-radius:18px;padding:8px 10px 8px 10px;
   display:flex;flex-direction:row;flex-wrap:nowrap;gap:8px;align-items:stretch;
   overflow:hidden;
   transition:border-color .06s,background .06s,box-shadow .06s;
   backdrop-filter:blur(12px);
   box-shadow:0 4px 18px rgba(0,0,0,.12);
 }
+.row-group:hover{padding-right:40px;}
 .row-group.active-capture{background:rgba(123,87,255,.08);border-color:rgba(123,87,255,.36);}
 .row-group.search-match{border-color:rgba(168,85,247,.45);}
 .row-del{
@@ -1837,15 +1838,16 @@ body.dark .logo-name,body.night .logo-name{color:#eaf0ff;}
   background:var(--inputBg);border:1px solid var(--inputBorder);
   color:var(--textDim);cursor:pointer;display:flex;align-items:center;justify-content:center;
   z-index:12;font-size:15px;font-weight:700;line-height:1;transition:all .05s;
-  box-shadow:0 4px 10px rgba(109,122,156,.2);
+  box-shadow:0 4px 10px rgba(109,122,156,.2);opacity:0;pointer-events:none;
 }
+.row-group:hover .row-del,.row-group:hover .row-pin{opacity:1;pointer-events:auto;}
 .row-del:hover{background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.4);color:#c33232;}
 .row-pin{
   position:absolute;top:34px;right:8px;width:22px;height:22px;border-radius:50%;
   background:var(--inputBg);border:1px solid var(--inputBorder);
   color:var(--textDim);cursor:pointer;display:flex;align-items:center;justify-content:center;
   z-index:12;font-size:12px;line-height:1;transition:all .05s;
-  box-shadow:0 4px 10px rgba(109,122,156,.2);
+  box-shadow:0 4px 10px rgba(109,122,156,.2);opacity:0;pointer-events:none;
 }
 .row-pin.active{background:rgba(109,40,217,.2);border-color:rgba(139,92,246,.55);color:var(--accentPrimary);}
 .row-pin:hover{border-color:rgba(139,92,246,.55);color:var(--text);}
@@ -1946,7 +1948,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .hotkey-input:focus{border-color:rgba(123,87,255,.62);box-shadow:0 0 0 2px rgba(123,87,255,.18);}
 .hotkey-save{width:auto;flex-shrink:0;margin:0;padding:8px 12px;height:34px;min-width:66px;font-size:14px;font-weight:700;border-radius:8px;}
 .hotkey-note{margin-top:7px;font-size:13px;color:var(--textMuted);}
-.hotkey-reset-mini{width:auto;padding:5px 10px;font-size:12px;height:28px;border-radius:7px;min-width:auto;white-space:nowrap;margin:0;}
+.hotkey-reset-mini{width:28px;padding:0;font-size:0;height:28px;border-radius:7px;min-width:28px;white-space:nowrap;margin:0;justify-content:center;}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px;}
 .toggle-info{flex:1;}
 .toggle-label{font-size:16px;font-weight:700;}
@@ -2103,7 +2105,12 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
     <div class="settings-section">
       <div class="hotkey-head">
         <div class="s-title" style="margin-bottom:0">Hotkey</div>
-        <button class="action-btn hotkey-reset-mini" id="hotkey-reset" onclick="resetHotkey()">Reset</button>
+        <button class="action-btn hotkey-reset-mini" id="hotkey-reset" onclick="resetHotkey()" title="Reset hotkey">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 3-6.7"/>
+            <path d="M3 3v6h6"/>
+          </svg>
+        </button>
       </div>
       <div class="hotkey-row">
         <input id="hotkey-input" class="hotkey-input" value="Ctrl + D" placeholder="Press your keys" tabindex="-1" onmousedown="onHotkeyInputMouseDown(event)" onkeydown="onHotkeyInputKey(event)" onblur="hotkeyCaptureArmed=false" oninput="this.dataset.value=''" />
@@ -2373,7 +2380,7 @@ function flatEntries(visibleRows) {
   // Accepts pre-built visibleRows to avoid recomputing sort/filter when called from renderAll.
   const src = visibleRows || _buildVisible().visible;
   const out=[];
-  src.forEach((row)=>row.entries.forEach((e,ei)=>out.push({ei,e,rowId:row.id})));
+  src.forEach((row,rowIndex)=>row.entries.forEach((e,ei)=>out.push({ei,e,rowId:row.id,rowIndex})));
   return out;
 }
 
@@ -2621,6 +2628,44 @@ function _focusTopNav(idx) {
   if (typeof el.focus === 'function') el.focus({preventScroll:true});
 }
 
+function _focusSettingsByPosition(direction) {
+  const items = _settingsNavItems();
+  if (!items.length) return false;
+  const current = document.activeElement;
+  const base = items.includes(current) ? current : items[Math.max(0, settingsNavIdx)];
+  if (!base) return false;
+  const baseRect = base.getBoundingClientRect();
+  let best = null;
+  let bestScore = Infinity;
+  for (const item of items) {
+    if (item === base) continue;
+    const rect = item.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const baseX = baseRect.left + baseRect.width / 2;
+    const baseY = baseRect.top + baseRect.height / 2;
+    const dx = centerX - baseX;
+    const dy = centerY - baseY;
+    let valid = false;
+    let score = Infinity;
+    if (direction === 'down' && dy > 4) { valid = true; score = dy * 10 + Math.abs(dx); }
+    if (direction === 'up' && dy < -4) { valid = true; score = Math.abs(dy) * 10 + Math.abs(dx); }
+    if (direction === 'right' && dx > 4) { valid = true; score = dx * 10 + Math.abs(dy); }
+    if (direction === 'left' && dx < -4) { valid = true; score = Math.abs(dx) * 10 + Math.abs(dy); }
+    if (valid && score < bestScore) {
+      best = item;
+      bestScore = score;
+    }
+  }
+  if (!best) return false;
+  const idx = items.indexOf(best);
+  if (idx >= 0) {
+    _focusSettingsItem(idx);
+    return true;
+  }
+  return false;
+}
+
 function _handleSettingsKeys(e) {
   if (!settingsOpen) return false;
   if (e.defaultPrevented) return true;
@@ -2636,20 +2681,48 @@ function _handleSettingsKeys(e) {
     document.getElementById('gear-btn')?.focus();
     return true;
   }
+  const active = document.activeElement;
+  const onTab = active?.classList?.contains('settings-tab');
   if (key === 'ArrowDown') {
-    _focusSettingsItem(settingsNavIdx + 1);
+    if (onTab) {
+      const panelItems = _settingsNavItems().filter(el => !el.classList.contains('settings-tab') && el.offsetParent !== null);
+      if (panelItems.length) {
+        const idx = _settingsNavItems().indexOf(panelItems[0]);
+        _focusSettingsItem(idx);
+      }
+    } else if (!_focusSettingsByPosition('down')) {
+      _focusSettingsItem(settingsNavIdx + 1);
+    }
     return true;
   }
   if (key === 'ArrowUp') {
-    _focusSettingsItem(settingsNavIdx - 1);
+    if (!onTab && !_focusSettingsByPosition('up')) {
+      _focusSettingsItem(settingsNavIdx - 1);
+    }
     return true;
   }
   if (key === 'ArrowLeft') {
-    _focusSettingsItem(settingsNavIdx - 1);
+    if (onTab) {
+      const tabs = Array.from(document.querySelectorAll('#settings .settings-tab'));
+      const ti = tabs.indexOf(active);
+      const next = tabs[Math.max(0, ti - 1)];
+      next?.click();
+      next?.focus({preventScroll:true});
+    } else if (!_focusSettingsByPosition('left')) {
+      _focusSettingsItem(settingsNavIdx - 1);
+    }
     return true;
   }
   if (key === 'ArrowRight') {
-    _focusSettingsItem(settingsNavIdx + 1);
+    if (onTab) {
+      const tabs = Array.from(document.querySelectorAll('#settings .settings-tab'));
+      const ti = tabs.indexOf(active);
+      const next = tabs[Math.min(tabs.length - 1, ti + 1)];
+      next?.click();
+      next?.focus({preventScroll:true});
+    } else if (!_focusSettingsByPosition('right')) {
+      _focusSettingsItem(settingsNavIdx + 1);
+    }
     return true;
   }
   if (key === 'Home') {
@@ -2739,8 +2812,8 @@ document.addEventListener('keydown', e => {
     document.getElementById('search')?.focus();
     renderAll(); return;
   }
-  // ArrowRight = next card in row, ArrowDown = first card of next row
-  // ArrowLeft  = prev card in row, ArrowUp   = first card of prev row
+  // ArrowRight = next card in row, ArrowDown = same column in next row when possible
+  // ArrowLeft  = prev card in row, ArrowUp   = same column in previous row when possible
   if (e.key==='ArrowRight') {
     e.preventDefault();
     kbIdx=Math.min(kbIdx+1, flat.length-1);
@@ -2753,10 +2826,15 @@ document.addEventListener('keydown', e => {
     scrollKbTarget('nearest');
   } else if (e.key==='ArrowDown') {
     e.preventDefault();
-    // Jump to first card of the next row
-    const curRowId = flat[kbIdx]?.rowId;
-    const nextRowIdx = flat.findIndex((f,i)=>i>kbIdx && f.rowId!==curRowId);
-    if (nextRowIdx !== -1) kbIdx = nextRowIdx;
+    const cur = flat[kbIdx];
+    if (cur) {
+      const nextRowItems = flat.filter(f => f.rowIndex === cur.rowIndex + 1);
+      if (nextRowItems.length) {
+        const preferred = nextRowItems.find(f => f.ei === cur.ei) || nextRowItems[Math.min(cur.ei, nextRowItems.length - 1)];
+        const nextIdx = flat.findIndex(f => f.e.id === preferred.e.id);
+        if (nextIdx !== -1) kbIdx = nextIdx;
+      }
+    }
     renderAll();
     scrollKbTarget('nearest');
   } else if (e.key==='ArrowUp') {
@@ -2769,14 +2847,14 @@ document.addEventListener('keydown', e => {
       _focusTopNav(0);
       return;
     }
-    // Jump to first card of the previous row
-    const curRowId = flat[kbIdx]?.rowId;
-    const prevFlat = flat.slice(0, kbIdx).reverse();
-    const prevRowStart = prevFlat.find(f=>f.rowId!==curRowId);
-    if (prevRowStart) {
-      // find the first card of that row
-      const firstOfRow = flat.findIndex(f=>f.rowId===prevRowStart.rowId);
-      kbIdx = firstOfRow;
+    const cur = flat[kbIdx];
+    if (cur) {
+      const prevRowItems = flat.filter(f => f.rowIndex === cur.rowIndex - 1);
+      if (prevRowItems.length) {
+        const preferred = prevRowItems.find(f => f.ei === cur.ei) || prevRowItems[Math.min(cur.ei, prevRowItems.length - 1)];
+        const prevIdx = flat.findIndex(f => f.e.id === preferred.e.id);
+        if (prevIdx !== -1) kbIdx = prevIdx;
+      }
     }
     renderAll();
     scrollKbTarget('start');
