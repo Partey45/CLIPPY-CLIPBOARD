@@ -1891,13 +1891,19 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .card-add:hover{background:rgba(123,87,255,.11);border-color:rgba(123,87,255,.5);}
 
 /* ── SETTINGS ── */
-#settings{position:fixed;top:0;right:0;bottom:0;width:280px;background:var(--panelBg);border-left:1px solid var(--panelBorder);z-index:500;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.3);animation:slideIn .08s ease;backdrop-filter:none;}
+#settings{position:fixed;top:0;right:0;bottom:0;width:300px;background:var(--panelBg);border-left:1px solid var(--panelBorder);z-index:500;display:flex;flex-direction:column;box-shadow:-12px 0 40px rgba(0,0,0,.3);animation:slideIn .08s ease;backdrop-filter:none;}
 #settings-backdrop{position:fixed;inset:0;z-index:499;background:rgba(10,15,30,.14);}
-.settings-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid var(--navBorder);}
-.settings-title{font-size:20px;font-weight:700;}
-.settings-close{background:none;border:none;color:var(--textMuted);cursor:pointer;font-size:24px;line-height:1;}
-.settings-body{flex:1;overflow-y:auto;padding:16px 18px;}
-.settings-section{margin-bottom:20px;}
+.settings-head{display:flex;align-items:center;justify-content:space-between;padding:16px 16px 12px;border-bottom:1px solid var(--navBorder);}
+.settings-title{font-size:38px;font-weight:700;letter-spacing:-.02em;}
+.settings-close{width:32px;height:32px;border-radius:8px;border:1px solid var(--inputBorder);background:var(--inputBg);color:var(--textMuted);cursor:pointer;font-size:22px;line-height:1;}
+.settings-body{flex:1;overflow-y:auto;padding:12px 14px;}
+.settings-tabs{display:flex;gap:6px;background:var(--inputBg);border:1px solid var(--inputBorder);border-radius:22px;padding:4px;margin-bottom:12px;position:sticky;top:0;z-index:2;}
+.settings-tab{flex:1;height:32px;border:none;border-radius:16px;background:transparent;color:var(--textDim);font-size:13px;font-weight:700;cursor:pointer;}
+.settings-tab.active{background:linear-gradient(135deg,#6d5efc,#8b5cf6);color:#fff;box-shadow:0 5px 14px rgba(109,94,252,.25);}
+.settings-panel{display:none;}
+.settings-panel.active{display:block;}
+.settings-card{background:var(--cardBg);border:1px solid var(--inputBorder);border-radius:12px;padding:12px;margin-bottom:12px;}
+.settings-section{margin-bottom:12px;background:var(--cardBg);border:1px solid var(--inputBorder);border-radius:12px;padding:12px;}
 .s-title{font-size:13px;color:var(--sectionLabel);font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:9px;}
 .theme-grid{display:flex;gap:7px;}
 .theme-btn{flex:1;padding:9px 6px;border-radius:9px;cursor:pointer;border:2px solid var(--inputBorder);background:var(--inputBg);transition:all .08s;display:flex;flex-direction:column;align-items:center;gap:4px;}
@@ -1916,8 +1922,8 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .hotkey-reset{margin-top:8px;}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px;}
 .toggle-info{flex:1;}
-.toggle-label{font-size:18px;font-weight:500;}
-.toggle-sub{font-size:15px;color:var(--textMuted);margin-top:1px;}
+.toggle-label{font-size:16px;font-weight:700;}
+.toggle-sub{font-size:13px;color:var(--textMuted);margin-top:1px;}
 .toggle-switch{width:36px;height:19px;border-radius:10px;position:relative;cursor:pointer;background:rgba(128,128,128,.22);border:1px solid rgba(128,128,128,.28);transition:all .08s;flex-shrink:0;}
 .toggle-switch.on{background:rgba(109,40,217,.75);border-color:rgba(139,92,246,.6);}
 .toggle-thumb{position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:rgba(200,200,200,.8);transition:all .08s;}
@@ -1929,7 +1935,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .hist-item-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
 .hist-empty{padding:10px 12px;font-size:15px;color:var(--textMuted);font-style:italic;}
 .hist-clear{margin-top:5px;background:none;border:none;color:var(--textMuted);font-size:15px;cursor:pointer;font-family:inherit;}
-.action-btn{width:100%;padding:7px 11px;border-radius:7px;cursor:pointer;background:rgba(128,128,128,.05);border:1px solid var(--inputBorder);color:var(--textDim);font-size:16px;font-family:inherit;font-weight:500;text-align:left;transition:all .08s;display:flex;align-items:center;gap:7px;margin-bottom:5px;}
+.action-btn{width:100%;padding:9px 11px;border-radius:10px;cursor:pointer;background:rgba(128,128,128,.05);border:1px solid var(--inputBorder);color:var(--textDim);font-size:16px;font-family:inherit;font-weight:600;text-align:left;transition:all .08s;display:flex;align-items:center;gap:7px;margin-bottom:6px;}
 .action-btn:hover{background:rgba(128,128,128,.11);}
 .pill-group{display:flex;gap:6px;flex-wrap:wrap;}
 .pill-btn{
@@ -2003,6 +2009,13 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
     <button class="settings-close" onclick="closeSettings()">×</button>
   </div>
   <div class="settings-body">
+    <div class="settings-tabs">
+      <button class="settings-tab active" id="stab-general" onclick="switchSettingsTab('general')">General</button>
+      <button class="settings-tab" id="stab-capture" onclick="switchSettingsTab('capture')">Capture</button>
+      <button class="settings-tab" id="stab-data" onclick="switchSettingsTab('data')">Data</button>
+    </div>
+
+    <div class="settings-panel active" data-stab="general">
 
     <div class="settings-section">
       <div class="s-title">General</div>
@@ -2030,6 +2043,9 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
         </button>
       </div>
     </div>
+
+    </div>
+    <div class="settings-panel" data-stab="capture">
 
     <div class="settings-section">
       <div class="s-title">Capture</div>
@@ -2091,6 +2107,9 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
       </div>
     </div>
 
+    </div>
+    <div class="settings-panel" data-stab="data">
+
     <div class="settings-section">
       <div class="s-title">Backup</div>
       <div class="backup-status" id="backup-status">Last backup: Never</div>
@@ -2104,6 +2123,8 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
       <button class="action-btn" onclick="bridge.exportCSV()">⬇ Export CSV</button>
       <button class="action-btn" onclick="bridge.importJSON()">⬆ Import JSON</button>
       <button class="action-btn" id="clear-all-btn" onclick="clearAllDataConfirm()">Clear All Data</button>
+    </div>
+
     </div>
 
   </div>
@@ -2125,6 +2146,7 @@ let editingId = null, kbIdx = -1, searchTerm = '';
 let settingsOpen = false, dragCard = null, dragRow = null;
 let userTargetId = null;
 let settingsNavIdx = -1;
+let settingsTab = 'general';
 let topNavIdx = -1;
 let clearAllConfirmTimer = null;
 let clearAllArmed = false;
@@ -2511,6 +2533,7 @@ function onSearchKey(e){
 function _settingsNavItems() {
   return Array.from(document.querySelectorAll(
     '#settings .settings-close, ' +
+    '#settings .settings-tab, ' +
     '#settings .theme-btn, ' +
     '#settings #startup-toggle, ' +
     '#settings #hotkey-save, ' +
@@ -2734,12 +2757,20 @@ function onCardKey(e,entryId){
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
+function switchSettingsTab(tab){
+  settingsTab = tab;
+  document.querySelectorAll('.settings-tab').forEach(b => b.classList.toggle('active', b.id === 'stab-' + tab));
+  document.querySelectorAll('.settings-panel').forEach(p => p.classList.toggle('active', p.dataset.stab === tab));
+  settingsNavIdx = -1;
+}
+
 function toggleSettings(){
   settingsOpen=!settingsOpen;
   document.getElementById('settings').style.display=settingsOpen?'flex':'none';
   document.getElementById('settings-backdrop').style.display=settingsOpen?'block':'none';
   document.getElementById('gear-btn').classList.toggle('active',settingsOpen);
   if (settingsOpen) {
+    switchSettingsTab(settingsTab || 'general');
     updateSettings();
     requestAnimationFrame(() => _focusSettingsItem(0));
   } else {
