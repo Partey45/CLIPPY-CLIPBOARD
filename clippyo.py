@@ -193,6 +193,7 @@ state = {
     "poll_rate": 500,
     "paste_plain_text": True,
     "launch_at_startup": True,
+    "backup_enabled": True,
     "history_limit": 10,
     "last_backup": "",
 }
@@ -229,6 +230,7 @@ def load():
             state["poll_rate"] = int(d.get("poll_rate", 500))
             state["paste_plain_text"] = bool(d.get("paste_plain_text", True))
             state["launch_at_startup"] = bool(d.get("launch_at_startup", True))
+            state["backup_enabled"] = bool(d.get("backup_enabled", True))
             state["history_limit"] = int(d.get("history_limit", 10))
             state["last_backup"] = d.get("last_backup", "")
 
@@ -284,6 +286,7 @@ def load():
     state["poll_rate"] = 500
     state["paste_plain_text"] = True
     state["launch_at_startup"] = True
+    state["backup_enabled"] = True
     state["history_limit"] = 10
     state["last_backup"] = ""
     save()
@@ -298,6 +301,7 @@ def save():
             "poll_rate": state.get("poll_rate", 500),
             "paste_plain_text": state.get("paste_plain_text", True),
             "launch_at_startup": state.get("launch_at_startup", True),
+            "backup_enabled": state.get("backup_enabled", True),
             "history_limit": state.get("history_limit", 10),
             "last_backup": state.get("last_backup", ""),
             "history": state.get("history", []),
@@ -305,11 +309,12 @@ def save():
     except Exception as exc:
         _log_exc("save()", exc)
 
-def _run_backup() -> bool:
+def _run_backup(target_dir: Path | None = None, prune_old: bool = True) -> bool:
     try:
-        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        out_dir = Path(target_dir) if target_dir else BACKUP_DIR
+        out_dir.mkdir(parents=True, exist_ok=True)
         now = datetime.now()
-        backup_file = BACKUP_DIR / f"clippy_backup_{now.strftime('%Y-%m-%d')}.json"
+        backup_file = out_dir / f"clippy_backup_{now.strftime('%Y-%m-%d')}.json"
         with _state_lock:
             payload = {
                 "rows": state.get("rows", []),
@@ -317,15 +322,16 @@ def _run_backup() -> bool:
             }
         backup_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), "utf-8")
 
-        cutoff = now - timedelta(days=7)
-        for path in BACKUP_DIR.glob("clippy_backup_*.json"):
-            try:
-                stamp = path.stem.replace("clippy_backup_", "")
-                file_date = datetime.strptime(stamp, "%Y-%m-%d")
-                if file_date < cutoff:
-                    path.unlink(missing_ok=True)
-            except Exception:
-                continue
+        if prune_old:
+            cutoff = now - timedelta(days=7)
+            for path in out_dir.glob("clippy_backup_*.json"):
+                try:
+                    stamp = path.stem.replace("clippy_backup_", "")
+                    file_date = datetime.strptime(stamp, "%Y-%m-%d")
+                    if file_date < cutoff:
+                        path.unlink(missing_ok=True)
+                except Exception:
+                    continue
 
         with _state_lock:
             state["last_backup"] = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -403,6 +409,7 @@ class Bridge(QObject):
                 "poll_rate":  state.get("poll_rate", 500),
                 "paste_plain_text": state.get("paste_plain_text", True),
                 "launch_at_startup": state.get("launch_at_startup", True),
+                "backup_enabled": state.get("backup_enabled", True),
                 "history_limit": state.get("history_limit", 10),
                 "last_backup": state.get("last_backup", ""),
             }
@@ -424,6 +431,7 @@ class Bridge(QObject):
                 "poll_rate":  state.get("poll_rate", 500),
                 "paste_plain_text": state.get("paste_plain_text", True),
                 "launch_at_startup": state.get("launch_at_startup", True),
+                "backup_enabled": state.get("backup_enabled", True),
                 "history_limit": state.get("history_limit", 10),
                 "last_backup": state.get("last_backup", ""),
             })
@@ -665,6 +673,13 @@ class Bridge(QObject):
         save()
         self._push()
 
+    @pyqtSlot(bool)
+    def setBackupEnabled(self, enabled):
+        with _state_lock:
+            state["backup_enabled"] = bool(enabled)
+        save()
+        self._push()
+
     @pyqtSlot(int)
     def setHistoryLimit(self, limit):
         if limit not in (5, 10, 20, 50):
@@ -677,8 +692,12 @@ class Bridge(QObject):
 
     @pyqtSlot()
     def backupNow(self):
-        if _run_backup():
-            self._push({"toast": "Backup saved to Documents"})
+        target = QFileDialog.getExistingDirectory(None, "Choose backup folder", str(BACKUP_DIR))
+        if not target:
+            self._push({"toast": "Backup canceled", "toast_type": "warn"})
+            return
+        if _run_backup(Path(target), prune_old=False):
+            self._push({"toast": "Backup saved"})
         else:
             self._push({"toast": "Backup failed — check clippy.log", "toast_type": "warn"})
 
@@ -1287,6 +1306,10 @@ class ClippyWindow(QMainWindow):
             pass
 
     def _run_backup_and_push(self):
+        with _state_lock:
+            enabled = bool(state.get("backup_enabled", True))
+        if not enabled:
+            return
         if _run_backup():
             self.bridge._push()
 
@@ -1584,6 +1607,7 @@ class ClippyWindow(QMainWindow):
             "poll_rate": state.get("poll_rate", 500),
             "paste_plain_text": state.get("paste_plain_text", True),
             "launch_at_startup": state.get("launch_at_startup", True),
+            "backup_enabled": state.get("backup_enabled", True),
             "history_limit": state.get("history_limit", 10),
             "last_backup": state.get("last_backup", ""),
             "hotkey": state.get("hotkey", DEFAULT_HOTKEY),
@@ -1897,7 +1921,9 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .settings-title{font-size:38px;font-weight:700;letter-spacing:-.02em;}
 .settings-close{width:32px;height:32px;border-radius:8px;border:1px solid var(--inputBorder);background:var(--inputBg);color:var(--textMuted);cursor:pointer;font-size:22px;line-height:1;}
 .settings-body{flex:1;overflow-y:auto;padding:12px 14px;}
-.settings-tabs{display:flex;gap:6px;background:var(--inputBg);border:1px solid var(--inputBorder);border-radius:22px;padding:4px;margin-bottom:12px;position:sticky;top:0;z-index:2;}
+.settings-body::-webkit-scrollbar{width:8px;}
+.settings-body::-webkit-scrollbar-thumb{background:var(--accentGlow,rgba(124,58,237,.35));border-radius:10px;}
+.settings-tabs{display:flex;gap:6px;background:var(--inputBg);border:1px solid var(--inputBorder);border-radius:22px;padding:4px;margin-bottom:12px;position:static;z-index:1;}
 .settings-tab{flex:1;height:32px;border:none;border-radius:16px;background:transparent;color:var(--textDim);font-size:13px;font-weight:700;cursor:pointer;}
 .settings-tab.active{background:linear-gradient(135deg,#6d5efc,#8b5cf6);color:#fff;box-shadow:0 5px 14px rgba(109,94,252,.25);}
 .settings-panel{display:none;}
@@ -1912,14 +1938,15 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .theme-label{font-size:15px;font-weight:500;color:var(--textDim);}
 .theme-btn.active .theme-label{color:#a78bfa;}
 .hotkey-row{display:flex;gap:8px;align-items:center;}
+.hotkey-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;}
 .hotkey-input{
   flex:1;height:34px;border-radius:8px;border:1px solid var(--inputBorder);
   background:var(--inputBg);color:var(--text);padding:0 10px;font-size:14px;outline:none;
 }
 .hotkey-input:focus{border-color:rgba(123,87,255,.62);box-shadow:0 0 0 2px rgba(123,87,255,.18);}
-.hotkey-save{margin-top:0;padding:8px 10px;}
+.hotkey-save{width:auto;flex-shrink:0;margin:0;padding:8px 12px;height:34px;min-width:66px;font-size:14px;font-weight:700;border-radius:8px;}
 .hotkey-note{margin-top:7px;font-size:13px;color:var(--textMuted);}
-.hotkey-reset{margin-top:8px;}
+.hotkey-reset-mini{width:auto;padding:5px 10px;font-size:12px;height:28px;border-radius:7px;min-width:auto;white-space:nowrap;margin:0;}
 .toggle-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px;}
 .toggle-info{flex:1;}
 .toggle-label{font-size:16px;font-weight:700;}
@@ -1946,7 +1973,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .pill-btn.active{background:rgba(109,40,217,.2);border-color:rgba(139,92,246,.55);color:var(--text);}
 .range-row{display:flex;align-items:center;gap:10px;}
 .range-slider{
-  flex:1;appearance:none;height:6px;border-radius:999px;background:var(--inputBg);
+  flex:1;appearance:none;height:8px;border-radius:999px;background:var(--inputBg);
   border:1px solid var(--inputBorder);outline:none;
 }
 .range-slider::-webkit-slider-thumb{
@@ -1961,6 +1988,8 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .small-search:focus{border-color:var(--accentPrimary,rgba(123,87,255,.45));box-shadow:0 0 0 2px var(--accentGlow,rgba(123,87,255,.12));}
 .backup-status{font-size:13px;color:var(--textMuted);margin-bottom:8px;}
 .danger-btn{border-color:rgba(239,68,68,.45)!important;color:#ef4444!important;}
+.danger-action{color:#b4232d!important;border-color:#ef9aa3!important;font-weight:800!important;}
+.slider-hints{display:flex;justify-content:space-between;margin-top:5px;color:var(--textMuted);font-size:11px;font-weight:600;}
 
 /* ── TOAST ── */
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:7px 20px;border-radius:100px;font-size:16px;font-weight:500;box-shadow:0 6px 24px rgba(0,0,0,.3);z-index:999;white-space:nowrap;animation:fadeUp .18s ease;pointer-events:none;display:none;}
@@ -2059,11 +2088,10 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
         </div>
       </div>
       <div class="toggle-sub" style="margin-bottom:6px">Capture speed</div>
-      <div class="pill-group">
-        <button class="pill-btn" id="poll-250" onclick="setPollRate(250)">Fast · 250ms</button>
-        <button class="pill-btn active" id="poll-500" onclick="setPollRate(500)">Normal · 500ms</button>
-        <button class="pill-btn" id="poll-1000" onclick="setPollRate(1000)">Relaxed · 1000ms</button>
+      <div class="range-row">
+        <input id="poll-slider" class="range-slider" type="range" min="0" max="2" step="1" value="1" oninput="setPollRateFromSlider(this.value)" />
       </div>
+      <div class="slider-hints"><span>Fast</span><span>Normal</span><span>Relaxed</span></div>
       <div style="height:10px"></div>
       <div class="toggle-sub" style="margin-bottom:6px">Paste format</div>
       <div class="pill-group">
@@ -2073,13 +2101,15 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
     </div>
 
     <div class="settings-section">
-      <div class="s-title">Hotkey</div>
+      <div class="hotkey-head">
+        <div class="s-title" style="margin-bottom:0">Hotkey</div>
+        <button class="action-btn hotkey-reset-mini" id="hotkey-reset" onclick="resetHotkey()">Reset</button>
+      </div>
       <div class="hotkey-row">
         <input id="hotkey-input" class="hotkey-input" value="Ctrl + D" placeholder="Press your keys" tabindex="-1" onmousedown="onHotkeyInputMouseDown(event)" onkeydown="onHotkeyInputKey(event)" onblur="hotkeyCaptureArmed=false" oninput="this.dataset.value=''" />
         <button class="action-btn hotkey-save" id="hotkey-save" onclick="saveHotkey()">Save</button>
       </div>
       <div class="hotkey-note">Default: Ctrl + D</div>
-      <button class="action-btn hotkey-reset" id="hotkey-reset" onclick="resetHotkey()">Reset to Ctrl + D</button>
     </div>
 
     <div class="settings-section">
@@ -2094,16 +2124,14 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
         </div>
       </div>
       <div class="toggle-sub" style="margin-bottom:6px">History size</div>
-      <div class="pill-group" style="margin-bottom:8px">
-        <button class="pill-btn" id="hist-limit-5" onclick="setHistoryLimit(5)">5</button>
-        <button class="pill-btn active" id="hist-limit-10" onclick="setHistoryLimit(10)">10</button>
-        <button class="pill-btn" id="hist-limit-20" onclick="setHistoryLimit(20)">20</button>
-        <button class="pill-btn" id="hist-limit-50" onclick="setHistoryLimit(50)">50</button>
+      <div class="range-row">
+        <input id="hist-limit-slider" class="range-slider" type="range" min="0" max="3" step="1" value="1" oninput="setHistoryLimitFromSlider(this.value)" />
       </div>
+      <div class="slider-hints"><span>5</span><span>10</span><span>20</span><span>50</span></div>
       <input id="history-search" class="small-search" placeholder="Search history..." oninput="onHistorySearch(this.value)" />
       <div id="history-section">
         <div class="history-list" id="history-list"><div class="hist-empty">Nothing captured yet</div></div>
-        <button class="hist-clear" id="hist-clear" style="display:none" onclick="clearHistory()">Clear history</button>
+        <button class="hist-clear danger-action" id="hist-clear" style="display:none" onclick="clearHistory()">Clear history</button>
       </div>
     </div>
 
@@ -2112,6 +2140,15 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 
     <div class="settings-section">
       <div class="s-title">Backup</div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Auto backup</div>
+          <div class="toggle-sub">Run daily backup automatically</div>
+        </div>
+        <div class="toggle-switch on" id="backup-toggle" tabindex="0" onclick="toggleBackupEnabled()">
+          <div class="toggle-thumb"></div>
+        </div>
+      </div>
       <div class="backup-status" id="backup-status">Last backup: Never</div>
       <button class="action-btn" onclick="bridge.openBackupFolder()">Open Backup Folder</button>
       <button class="action-btn" onclick="bridge.backupNow()">Backup Now</button>
@@ -2122,7 +2159,7 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
       <button class="action-btn" onclick="bridge.exportJSON()">⬇ Export JSON</button>
       <button class="action-btn" onclick="bridge.exportCSV()">⬇ Export CSV</button>
       <button class="action-btn" onclick="bridge.importJSON()">⬆ Import JSON</button>
-      <button class="action-btn" id="clear-all-btn" onclick="clearAllDataConfirm()">Clear All Data</button>
+      <button class="action-btn danger-action" id="clear-all-btn" onclick="clearAllDataConfirm()">Clear All Data</button>
     </div>
 
     </div>
@@ -2139,7 +2176,7 @@ let rows = [], cursor = {row_idx:0,entry_idx:0};
 let autoCapture = true, history = [], histEnabled = true;
 let hotkey = 'ctrl+d';
 let pollRate = 500, pastePlainText = true;
-let launchAtStartup = true, historyLimit = 10, lastBackup = '';
+let launchAtStartup = true, backupEnabled = true, historyLimit = 10, lastBackup = '';
 let historySearch = '';
 let hotkeyCaptureArmed = false;
 let editingId = null, kbIdx = -1, searchTerm = '';
@@ -2217,6 +2254,7 @@ function applyState(d) {
   pollRate    = d.poll_rate ?? 500;
   pastePlainText = d.paste_plain_text ?? true;
   launchAtStartup = d.launch_at_startup ?? true;
+  backupEnabled = d.backup_enabled ?? true;
   historyLimit = d.history_limit ?? 10;
   lastBackup = d.last_backup || '';
   // Restore persisted theme — use _applyThemeUI (DOM only) so we never call
@@ -2539,7 +2577,10 @@ function _settingsNavItems() {
     '#settings #hotkey-save, ' +
     '#settings #hotkey-reset, ' +
     '#settings #auto-toggle, ' +
+    '#settings #backup-toggle, ' +
     '#settings #hist-toggle, ' +
+    '#settings #poll-slider, ' +
+    '#settings #hist-limit-slider, ' +
     '#settings .pill-btn, ' +
     '#settings #history-search, ' +
     '#settings #hist-clear, ' +
@@ -2794,17 +2835,15 @@ function closeSettings(){
 
 function updateSettings(){
   document.getElementById('startup-toggle').classList.toggle('on',launchAtStartup);
+  document.getElementById('backup-toggle')?.classList.toggle('on',backupEnabled);
   document.getElementById('auto-toggle').classList.toggle('on',autoCapture);
   document.getElementById('hist-toggle').classList.toggle('on',histEnabled);
-
-  [250, 500, 1000].forEach(ms => {
-    document.getElementById(`poll-${ms}`)?.classList.toggle('active', pollRate === ms);
-  });
+  const pollSlider = document.getElementById('poll-slider');
+  if (pollSlider) pollSlider.value = String([250,500,1000].indexOf(pollRate));
   document.getElementById('paste-plain')?.classList.toggle('active', !!pastePlainText);
   document.getElementById('paste-rich')?.classList.toggle('active', !pastePlainText);
-  [5, 10, 20, 50].forEach(lim => {
-    document.getElementById(`hist-limit-${lim}`)?.classList.toggle('active', historyLimit === lim);
-  });
+  const histSlider = document.getElementById('hist-limit-slider');
+  if (histSlider) histSlider.value = String([5,10,20,50].indexOf(historyLimit));
 
   const backupStatus = document.getElementById('backup-status');
   if (backupStatus) {
@@ -2915,11 +2954,25 @@ function toggleStartup(){
   updateSettings();
 }
 
+function toggleBackupEnabled(){
+  backupEnabled = !backupEnabled;
+  bridge.setBackupEnabled(backupEnabled);
+  showToast(backupEnabled ? 'Auto backup enabled' : 'Auto backup disabled', 'ok');
+  updateSettings();
+}
+
 function setPollRate(ms){
+  if (pollRate === ms) return;
   pollRate = ms;
   bridge.setPollRate(ms);
   showToast(`Capture speed set to ${ms}ms`, 'ok');
   updateSettings();
+}
+
+function setPollRateFromSlider(idx){
+  const opts = [250, 500, 1000];
+  const ms = opts[Math.max(0, Math.min(2, Number(idx) || 0))];
+  setPollRate(ms);
 }
 
 function setPasteMode(plain){
@@ -2930,10 +2983,17 @@ function setPasteMode(plain){
 }
 
 function setHistoryLimit(limit){
+  if (historyLimit === limit) return;
   historyLimit = limit;
   bridge.setHistoryLimit(limit);
   showToast(`History size set to ${limit}`, 'ok');
   updateSettings();
+}
+
+function setHistoryLimitFromSlider(idx){
+  const opts = [5, 10, 20, 50];
+  const lim = opts[Math.max(0, Math.min(3, Number(idx) || 0))];
+  setHistoryLimit(lim);
 }
 
 function onHistorySearch(value){
