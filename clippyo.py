@@ -224,6 +224,7 @@ def load():
         try:
             d = json.loads(DATA_FILE.read_text("utf-8"))
             state["rows"] = d.get("rows", [])
+            state["auto_capture"] = bool(d.get("auto_capture", True))
             state["history_enabled"] = d.get("history_enabled", True)
             state["theme"] = d.get("theme", "daylight")
             state["hotkey"] = _normalize_hotkey(d.get("hotkey", DEFAULT_HOTKEY)) or DEFAULT_HOTKEY
@@ -280,6 +281,7 @@ def load():
                 pass
     state["rows"] = [_row(0)]
     state["rows"][0]["entries"][0]["text"] = "Welcome to Clippy!"
+    state["auto_capture"] = True
     state["history_enabled"] = True
     state["theme"] = "daylight"
     state["hotkey"] = DEFAULT_HOTKEY
@@ -295,6 +297,7 @@ def save():
     try:
         DATA_FILE.write_text(json.dumps({
             "rows": state["rows"],
+            "auto_capture": state.get("auto_capture", True),
             "history_enabled": state["history_enabled"],
             "theme": state.get("theme", "dark"),
             "hotkey": state.get("hotkey", DEFAULT_HOTKEY),
@@ -383,6 +386,8 @@ _clippy_last_pasted = ""   # The text Clippy just pasted — poller must skip th
 # Global lock — ALL reads+writes of `state` must hold this lock.
 # The clipboard poller runs on a QThread; Bridge slots run on the Qt main thread.
 # Without a lock, concurrent access silently corrupts rows/cursor/history.
+_last_clipboard_open_warning_ts = 0.0
+_last_clipboard_busy_toast_ts = 0.0
 _state_lock = threading.Lock()
 
 # Global reference so Bridge slots can reach the window
@@ -563,19 +568,48 @@ class Bridge(QObject):
 
     @pyqtSlot(str, str, str)
     def moveEntry(self, entry_id, target_row_id, target_entry_id):
+        toast = None
         with _state_lock:
-            src = None
-            for row in state["rows"]:
-                idx = next((i for i, e in enumerate(row["entries"]) if e["id"] == entry_id), None)
-                if idx is not None:
-                    src = row["entries"].pop(idx); break
-            if src:
-                for row in state["rows"]:
-                    if row["id"] == target_row_id:
-                        ti = next((i for i, e in enumerate(row["entries"]) if e["id"] == target_entry_id), None)
-                        row["entries"].insert(ti if ti is not None else len(row["entries"]), src); break
+            rows = state["rows"]
+            src_row = None
+            src_idx = None
+            target_row = None
+
+            for row in rows:
+                if src_row is None:
+                    idx = next((i for i, e in enumerate(row["entries"]) if e["id"] == entry_id), None)
+                    if idx is not None:
+                        src_row = row
+                        src_idx = idx
+                if target_row is None and row["id"] == target_row_id:
+                    target_row = row
+                if src_row is not None and target_row is not None:
+                    break
+
+            if src_row is None or src_idx is None or target_row is None:
+                return
+
+            if src_row is target_row:
+                entries = src_row["entries"]
+                src = entries.pop(src_idx)
+                ti = next((i for i, e in enumerate(entries) if e["id"] == target_entry_id), None)
+                entries.insert(ti if ti is not None else len(entries), src)
+            elif len(target_row["entries"]) >= 4:
+                toast = "That group is full"
+            else:
+                src = src_row["entries"].pop(src_idx)
+                ti = next((i for i, e in enumerate(target_row["entries"]) if e["id"] == target_entry_id), None)
+                target_row["entries"].insert(ti if ti is not None else len(target_row["entries"]), src)
+
             state["rows"] = [r for r in state["rows"] if r["entries"]]
-        save(); self._push()
+            n = len(state["rows"])
+            if n == 0:
+                state["cursor"] = {"row_idx": 0, "entry_idx": 0}
+            else:
+                ri = max(0, min(state["cursor"]["row_idx"], n - 1))
+                ei = max(0, min(state["cursor"]["entry_idx"], len(state["rows"][ri]["entries"]) - 1))
+                state["cursor"] = {"row_idx": ri, "entry_idx": ei}
+        save(); self._push({"toast": toast, "toast_type": "warn"} if toast else None)
 
     @pyqtSlot(bool)
     def setAutoCapture(self, enabled):
@@ -583,7 +617,7 @@ class Bridge(QObject):
             state["auto_capture"] = enabled
             if not enabled:
                 state["cursor"] = {"row_idx": -1, "entry_idx": -1}
-        self._push()
+        save(); self._push()
 
     @pyqtSlot(bool)
     def setHistoryEnabled(self, enabled):
@@ -840,11 +874,39 @@ class ClipboardPoller(QThread):
 
     def run(self):
         last_seen = ""
-        MAX_ROWS = 50  # FIX C3: cap row growth to prevent unbounded expansion
+        MAX_ROWS = 1700  # Default auto-capture ceiling
+        clipboard_busy_streak = 0
         def _sleep_tick():
             with _state_lock:
                 ms = int(state.get("poll_rate", 500))
             time.sleep(max(0.1, ms / 1000.0))
+
+        def _emit_state(extra=None):
+            win = _win_ref[0]
+            if win is None:
+                return
+            with _state_lock:
+                payload = {
+                    "rows": state["rows"],
+                    "cursor": state["cursor"],
+                    "auto": state["auto_capture"],
+                    "history": state["history"],
+                    "hist_enabled": state["history_enabled"],
+                    "theme": state.get("theme", "dark"),
+                    "hotkey": state.get("hotkey", DEFAULT_HOTKEY),
+                    "poll_rate": state.get("poll_rate", 500),
+                    "paste_plain_text": state.get("paste_plain_text", True),
+                    "launch_at_startup": state.get("launch_at_startup", True),
+                    "backup_enabled": state.get("backup_enabled", True),
+                    "history_limit": state.get("history_limit", 10),
+                    "last_backup": state.get("last_backup", ""),
+                }
+            if extra:
+                payload.update(extra)
+            try:
+                win.bridge.stateChanged.emit(json.dumps(payload))
+            except Exception as exc:
+                _log_exc("ClipboardPoller._emit_state()", exc)
 
         while True:
             # ── Sleep is ALWAYS at the end of the loop body ──────────────────
@@ -860,12 +922,44 @@ class ClipboardPoller(QThread):
                 continue
 
             global _clippy_is_pasting, _clippy_last_pasted
+            global _last_clipboard_open_warning_ts, _last_clipboard_busy_toast_ts
             if _clippy_is_pasting:
                 _sleep_tick()
                 continue
 
             try:
-                text = pyperclip.paste()
+                try:
+                    text = pyperclip.paste()
+                except Exception as exc:
+                    msg = str(exc)
+                    transient_clipboard_lock = (
+                        CLIPBOARD_OK and
+                        exc.__class__.__name__ == "PyperclipWindowsException" and
+                        "OpenClipboard" in msg
+                    )
+                    if transient_clipboard_lock:
+                        clipboard_busy_streak += 1
+                        now = time.monotonic()
+                        if now - _last_clipboard_open_warning_ts >= 15.0:
+                            log.warning("Clipboard busy; retrying capture on next poll")
+                            _last_clipboard_open_warning_ts = now
+                        if clipboard_busy_streak >= 12:
+                            with _state_lock:
+                                state["auto_capture"] = False
+                                state["cursor"] = {"row_idx": -1, "entry_idx": -1}
+                            log.warning("Clipboard busy for an extended period; auto-capture paused")
+                            if now - _last_clipboard_busy_toast_ts >= 30.0:
+                                _emit_state({
+                                    "toast": "Clipboard is busy - auto-capture paused",
+                                    "toast_type": "warn",
+                                })
+                                _last_clipboard_busy_toast_ts = now
+                            clipboard_busy_streak = 0
+                        _sleep_tick()
+                        continue
+                    raise
+
+                clipboard_busy_streak = 0
 
                 if not text:
                     last_seen = ""
@@ -1813,6 +1907,8 @@ body.dark .logo-name,body.night .logo-name{color:#eaf0ff;}
   display:flex;align-items:stretch;gap:6px;transition:opacity .08s;
   height:calc((100vh - 64px - 20px - 16px) / 3);
   min-height:126px;
+  width:100%;
+  min-width:0;
 }
 .row-wrap.dragging{opacity:.35;}
 .row-num{
@@ -1825,29 +1921,39 @@ body.dark .logo-name,body.night .logo-name{color:#eaf0ff;}
   flex:1;position:relative;background:var(--rowBg);border:1px solid var(--rowBorder);
   border-radius:18px;padding:8px 10px 8px 10px;
   display:flex;flex-direction:row;flex-wrap:nowrap;gap:8px;align-items:stretch;
-  overflow:hidden;
+  max-width:100%;
+  min-width:0;
+  overflow:visible;
   transition:border-color .06s,background .06s,box-shadow .06s;
   backdrop-filter:blur(12px);
   box-shadow:0 4px 18px rgba(0,0,0,.12);
 }
-.row-group:hover{padding-right:40px;}
 .row-group.active-capture{background:rgba(123,87,255,.08);border-color:rgba(123,87,255,.36);}
 .row-group.search-match{border-color:rgba(168,85,247,.45);}
+.row-btn-strip{
+  display:flex;flex-direction:column;justify-content:center;align-items:center;gap:6px;
+  flex-shrink:0;min-width:0;
+  width:0;overflow:hidden;
+  opacity:0;pointer-events:none;
+  transition:width .15s ease,opacity .15s ease,min-width .15s ease;
+}
+.row-group > .row-del,.row-group > .row-pin{display:none;}
 .row-del{
-  position:absolute;top:8px;right:8px;width:22px;height:22px;border-radius:50%;
+  width:24px;height:24px;border-radius:50%;flex-shrink:0;padding:0;
   background:var(--inputBg);border:1px solid var(--inputBorder);
   color:var(--textDim);cursor:pointer;display:flex;align-items:center;justify-content:center;
-  z-index:12;font-size:15px;font-weight:700;line-height:1;transition:all .05s;
-  box-shadow:0 4px 10px rgba(109,122,156,.2);opacity:0;pointer-events:none;
+  font-size:13px;font-weight:700;line-height:1;
+  transition:background .05s,border-color .05s,color .05s;
+  box-shadow:0 2px 8px rgba(109,122,156,.18);
 }
-.row-group:hover .row-del,.row-group:hover .row-pin{opacity:1;pointer-events:auto;}
 .row-del:hover{background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.4);color:#c33232;}
 .row-pin{
-  position:absolute;top:34px;right:8px;width:22px;height:22px;border-radius:50%;
+  width:24px;height:24px;border-radius:50%;flex-shrink:0;padding:0;
   background:var(--inputBg);border:1px solid var(--inputBorder);
   color:var(--textDim);cursor:pointer;display:flex;align-items:center;justify-content:center;
-  z-index:12;font-size:12px;line-height:1;transition:all .05s;
-  box-shadow:0 4px 10px rgba(109,122,156,.2);opacity:0;pointer-events:none;
+  font-size:11px;line-height:1;
+  transition:background .05s,border-color .05s,color .05s;
+  box-shadow:0 2px 8px rgba(109,122,156,.18);
 }
 .row-pin.active{background:rgba(109,40,217,.2);border-color:rgba(139,92,246,.55);color:var(--accentPrimary);}
 .row-pin:hover{border-color:rgba(139,92,246,.55);color:var(--text);}
@@ -1922,12 +2028,16 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .settings-head{display:flex;align-items:center;justify-content:space-between;padding:16px 16px 12px;border-bottom:1px solid var(--navBorder);}
 .settings-title{font-size:38px;font-weight:700;letter-spacing:-.02em;}
 .settings-close{width:32px;height:32px;border-radius:8px;border:1px solid var(--inputBorder);background:var(--inputBg);color:var(--textMuted);cursor:pointer;font-size:22px;line-height:1;}
+.settings-close.nav-focus,.settings-tab.nav-focus,.theme-btn.nav-focus,.toggle-switch.nav-focus,.range-slider.nav-focus,.pill-btn.nav-focus,.hotkey-input.nav-focus,.small-search.nav-focus,.hist-item.nav-focus,.action-btn.nav-focus,.hist-clear.nav-focus{
+  box-shadow:0 0 0 3px var(--accentGlow,rgba(123,87,255,.22))!important;
+  border-color:var(--accentPrimary,rgba(123,87,255,.46))!important;
+}
 .settings-body{flex:1;overflow-y:auto;padding:12px 14px;}
 .settings-body::-webkit-scrollbar{width:8px;}
 .settings-body::-webkit-scrollbar-thumb{background:var(--accentGlow,rgba(124,58,237,.35));border-radius:10px;}
 .settings-tabs{display:flex;gap:6px;background:var(--inputBg);border:1px solid var(--inputBorder);border-radius:22px;padding:4px;margin-bottom:12px;position:static;z-index:1;}
-.settings-tab{flex:1;height:32px;border:none;border-radius:16px;background:transparent;color:var(--textDim);font-size:13px;font-weight:700;cursor:pointer;}
-.settings-tab.active{background:linear-gradient(135deg,#6d5efc,#8b5cf6);color:#fff;box-shadow:0 5px 14px rgba(109,94,252,.25);}
+.settings-tab{flex:1;height:32px;border:none;border-radius:16px;background:transparent;color:var(--textDim);font-size:13px;font-weight:700;cursor:pointer;transition:all .08s;}
+.settings-tab.active{background:linear-gradient(135deg,var(--accentPrimary,#6d5efc),#8b5cf6);color:#fff;box-shadow:0 5px 14px rgba(109,94,252,.25);}
 .settings-panel{display:none;}
 .settings-panel.active{display:block;}
 .settings-card{background:var(--cardBg);border:1px solid var(--inputBorder);border-radius:12px;padding:12px;margin-bottom:12px;}
@@ -1939,10 +2049,10 @@ mark{background:rgba(168,85,247,.35);color:#fff;border-radius:3px;padding:0 2px;
 .theme-swatch{width:26px;height:26px;border-radius:7px;border:1px solid rgba(139,92,246,.25);}
 .theme-label{font-size:15px;font-weight:500;color:var(--textDim);}
 .theme-btn.active .theme-label{color:#a78bfa;}
-.hotkey-row{display:flex;gap:8px;align-items:center;}
+.hotkey-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;}
 .hotkey-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;}
 .hotkey-input{
-  flex:1;height:34px;border-radius:8px;border:1px solid var(--inputBorder);
+  width:100%;min-width:0;height:34px;border-radius:8px;border:1px solid var(--inputBorder);
   background:var(--inputBg);color:var(--text);padding:0 10px;font-size:14px;outline:none;
 }
 .hotkey-input:focus{border-color:rgba(123,87,255,.62);box-shadow:0 0 0 2px rgba(123,87,255,.18);}
@@ -2477,6 +2587,10 @@ function renderAll() {
         <button class="row-del" onclick="delRow('${row.id}')">✕</button>
         <button class="row-pin${row.pinned ? ' active' : ''}" onclick="bridge.pinRow('${row.id}')">📌</button>
         ${cards}${addCard}
+        <div class="row-btn-strip">
+          <button class="row-del" onclick="delRow('${row.id}')" title="Close group">&times;</button>
+          <button class="row-pin${row.pinned ? ' active' : ''}" onclick="bridge.pinRow('${row.id}')" title="Pin group">&#128204;</button>
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -2491,9 +2605,29 @@ function renderAll() {
       ta.selectionStart = ta.selectionEnd = ta.value.length;
     }
   }
+  _attachRowHoverListeners();
 }
 
 // ── Card click — set user target ──────────────────────────────────────────────
+function _attachRowHoverListeners(){
+  document.querySelectorAll('.row-wrap').forEach(wrap => {
+    const strip = wrap.querySelector('.row-btn-strip');
+    if (!strip) return;
+    wrap.addEventListener('mouseenter', () => {
+      strip.style.width = '30px';
+      strip.style.minWidth = '30px';
+      strip.style.opacity = '1';
+      strip.style.pointerEvents = 'auto';
+    });
+    wrap.addEventListener('mouseleave', () => {
+      strip.style.width = '0';
+      strip.style.minWidth = '0';
+      strip.style.opacity = '0';
+      strip.style.pointerEvents = 'none';
+    });
+  });
+}
+
 function onCardClick(event, rowId, entryId) {
   if (event.target.closest('button')||event.target.tagName==='TEXTAREA') return;
   userTargetId = entryId;
@@ -2576,24 +2710,90 @@ function onSearchKey(e){
 
 // ── Keyboard navigation ───────────────────────────────────────────────────────
 function _settingsNavItems() {
-  return Array.from(document.querySelectorAll(
-    '#settings .settings-close, ' +
-    '#settings .settings-tab, ' +
-    '#settings .theme-btn, ' +
-    '#settings #startup-toggle, ' +
-    '#settings #hotkey-save, ' +
-    '#settings #hotkey-reset, ' +
-    '#settings #auto-toggle, ' +
-    '#settings #backup-toggle, ' +
-    '#settings #hist-toggle, ' +
-    '#settings #poll-slider, ' +
-    '#settings #hist-limit-slider, ' +
-    '#settings .pill-btn, ' +
-    '#settings #history-search, ' +
-    '#settings #hist-clear, ' +
-    '#settings .hist-item, ' +
-    '#settings .action-btn'
-  )).filter(el => el.offsetParent !== null && !el.disabled);
+  const ordered = [
+    document.querySelector('#settings .settings-close'),
+    ...Array.from(document.querySelectorAll('#settings .settings-tab')),
+    ...Array.from(document.querySelectorAll(
+      '#settings .theme-btn, ' +
+      '#settings #startup-toggle, ' +
+      '#settings #hotkey-input, ' +
+      '#settings #hotkey-save, ' +
+      '#settings #hotkey-reset, ' +
+      '#settings #auto-toggle, ' +
+      '#settings #backup-toggle, ' +
+      '#settings #hist-toggle, ' +
+      '#settings #poll-slider, ' +
+      '#settings #hist-limit-slider, ' +
+      '#settings .pill-btn, ' +
+      '#settings #history-search, ' +
+      '#settings #hist-clear, ' +
+      '#settings .hist-item, ' +
+      '#settings .action-btn'
+    ))
+  ];
+  return ordered.filter(el => _isSettingsNavVisible(el) && !el.disabled);
+}
+
+function _settingsTabs() {
+  return Array.from(document.querySelectorAll('#settings .settings-tab')).filter(el => _isSettingsNavVisible(el) && !el.disabled);
+}
+
+function _isSettingsNavVisible(el) {
+  if (!el) return false;
+  const style = window.getComputedStyle(el);
+  if (style.display === 'none' || style.visibility === 'hidden') {
+    return false;
+  }
+  const panel = el.closest('.settings-panel');
+  if (panel) {
+    const panelStyle = window.getComputedStyle(panel);
+    if (panelStyle.display === 'none' || panelStyle.visibility === 'hidden') {
+      return false;
+    }
+  }
+  if (el.classList?.contains('settings-tab') || el.classList?.contains('settings-close')) {
+    return true;
+  }
+  return true;
+}
+
+function _settingsPanelItems() {
+  return _settingsNavItems().filter(el =>
+    !el.classList.contains('settings-tab') &&
+    !el.classList.contains('settings-close')
+  );
+}
+
+function _firstSettingsPanelItem() {
+  return _settingsPanelItems()[0] || null;
+}
+
+function _focusSettingsEl(el) {
+  if (!el) return false;
+  const items = _settingsNavItems();
+  const idx = items.indexOf(el);
+  if (idx < 0) return false;
+  _focusSettingsItem(idx);
+  return true;
+}
+
+function _settingsItemIndex(el) {
+  if (!el) return -1;
+  return _settingsNavItems().indexOf(el);
+}
+
+function _focusSettingsSibling(active, direction) {
+  if (!active) return false;
+  const container = active.closest('.settings-tabs, .theme-grid, .pill-group, .hotkey-row');
+  if (!container) return false;
+  const items = _settingsNavItems().filter(el => el.closest('.settings-tabs, .theme-grid, .pill-group, .hotkey-row') === container);
+  const idx = items.indexOf(active);
+  if (idx < 0) return false;
+  const next = direction === 'left'
+    ? items[Math.max(0, idx - 1)]
+    : items[Math.min(items.length - 1, idx + 1)];
+  if (!next || next === active) return false;
+  return _focusSettingsEl(next);
 }
 
 function _focusSettingsItem(idx) {
@@ -2604,9 +2804,12 @@ function _focusSettingsItem(idx) {
   }
   const n = items.length;
   settingsNavIdx = ((idx % n) + n) % n;
+  items.forEach(el => el.classList.remove('nav-focus'));
   const el = items[settingsNavIdx];
+  el.classList.add('nav-focus');
   if (typeof el.focus === 'function') el.focus({preventScroll:true});
-  el.scrollIntoView({block:'nearest', inline:'nearest', behavior:'auto'});
+  const behavior = el.classList?.contains('settings-tab') ? 'smooth' : 'auto';
+  el.scrollIntoView({block:'nearest', inline:'nearest', behavior});
 }
 
 function _topNavItems() {
@@ -2683,55 +2886,109 @@ function _handleSettingsKeys(e) {
   }
   const active = document.activeElement;
   const onTab = active?.classList?.contains('settings-tab');
+  const onClose = active?.classList?.contains('settings-close');
+  const tabs = _settingsTabs();
+  const firstTab = tabs[0] || null;
+  const activeTab = document.querySelector('#settings .settings-tab.active') ||
+    tabs.find(tab => tab.id === 'stab-' + settingsTab) ||
+    tabs[tabs.length - 1] ||
+    null;
+  const activeIdx = _settingsItemIndex(active);
   if (key === 'ArrowDown') {
     if (onTab) {
-      const panelItems = _settingsNavItems().filter(el => !el.classList.contains('settings-tab') && el.offsetParent !== null);
+      const panelItems = _settingsPanelItems();
       if (panelItems.length) {
         const idx = _settingsNavItems().indexOf(panelItems[0]);
         _focusSettingsItem(idx);
       }
-    } else if (!_focusSettingsByPosition('down')) {
-      _focusSettingsItem(settingsNavIdx + 1);
+    } else if (active?.id === 'startup-toggle' && settingsTab === 'general') {
+      _focusSettingsEl(document.getElementById('theme-night'));
+    } else if (onClose) {
+      _focusSettingsEl(firstTab);
+    } else if (activeIdx >= 0) {
+      _focusSettingsItem(activeIdx + 1);
     }
     return true;
   }
   if (key === 'ArrowUp') {
-    if (!onTab && !_focusSettingsByPosition('up')) {
-      _focusSettingsItem(settingsNavIdx - 1);
+    if (onClose) {
+      const items = _settingsPanelItems();
+      const last = items[items.length - 1];
+      if (!_focusSettingsEl(last)) {
+        _focusSettingsEl(activeTab);
+      }
+    } else if (onTab && active === firstTab) {
+      _focusSettingsEl(document.querySelector('#settings .settings-close'));
+    } else if (active && active === _firstSettingsPanelItem()) {
+      _focusSettingsEl(activeTab);
+    } else if (activeIdx >= 0) {
+      _focusSettingsItem(activeIdx - 1);
     }
     return true;
   }
   if (key === 'ArrowLeft') {
     if (onTab) {
-      const tabs = Array.from(document.querySelectorAll('#settings .settings-tab'));
       const ti = tabs.indexOf(active);
       const next = tabs[Math.max(0, ti - 1)];
       next?.click();
       next?.focus({preventScroll:true});
-    } else if (!_focusSettingsByPosition('left')) {
-      _focusSettingsItem(settingsNavIdx - 1);
+    } else if (active?.id === 'theme-daylight') {
+      _focusSettingsEl(document.getElementById('theme-night'));
+    } else if (onClose) {
+      _focusSettingsEl(firstTab);
+    } else if (!_focusSettingsSibling(active, 'left') && activeIdx >= 0) {
+      _focusSettingsItem(activeIdx - 1);
     }
     return true;
   }
   if (key === 'ArrowRight') {
     if (onTab) {
-      const tabs = Array.from(document.querySelectorAll('#settings .settings-tab'));
       const ti = tabs.indexOf(active);
       const next = tabs[Math.min(tabs.length - 1, ti + 1)];
       next?.click();
       next?.focus({preventScroll:true});
-    } else if (!_focusSettingsByPosition('right')) {
-      _focusSettingsItem(settingsNavIdx + 1);
+    } else if (active?.id === 'theme-night') {
+      _focusSettingsEl(document.getElementById('theme-daylight'));
+    } else if (onClose) {
+      const panelItems = _settingsPanelItems();
+      if (panelItems.length) {
+        const idx = _settingsNavItems().indexOf(panelItems[0]);
+        _focusSettingsItem(idx);
+      }
+    } else if (!_focusSettingsSibling(active, 'right') && activeIdx >= 0) {
+      _focusSettingsItem(activeIdx + 1);
     }
     return true;
   }
   if (key === 'Home') {
-    _focusSettingsItem(0);
+    if (onTab) {
+      tabs[0]?.focus({preventScroll:true});
+    } else {
+      const items = _settingsPanelItems();
+      const first = items[0] || _settingsNavItems()[0];
+      const idx = _settingsNavItems().indexOf(first);
+      if (idx >= 0) _focusSettingsItem(idx);
+    }
     return true;
   }
   if (key === 'End') {
-    const items = _settingsNavItems();
-    _focusSettingsItem(items.length - 1);
+    if (onTab) {
+      tabs[tabs.length - 1]?.focus({preventScroll:true});
+    } else {
+      const items = _settingsPanelItems();
+      const last = items[items.length - 1] || _settingsNavItems()[_settingsNavItems().length - 1];
+      const idx = _settingsNavItems().indexOf(last);
+      if (idx >= 0) _focusSettingsItem(idx);
+    }
+    return true;
+  }
+
+  if (onTab) {
+    const panelItems = _settingsPanelItems();
+    if (panelItems.length) {
+      const idx = _settingsNavItems().indexOf(panelItems[0]);
+      _focusSettingsItem(idx);
+    }
     return true;
   }
 
@@ -2891,7 +3148,15 @@ function toggleSettings(){
   if (settingsOpen) {
     switchSettingsTab(settingsTab || 'general');
     updateSettings();
-    requestAnimationFrame(() => _focusSettingsItem(0));
+    requestAnimationFrame(() => {
+      const activeTab = document.querySelector('#settings .settings-tab.active');
+      if (!activeTab) {
+        _focusSettingsItem(0);
+        return;
+      }
+      const idx = _settingsNavItems().indexOf(activeTab);
+      if (idx >= 0) _focusSettingsItem(idx);
+    });
   } else {
     settingsNavIdx = -1;
   }
@@ -2899,6 +3164,7 @@ function toggleSettings(){
 function closeSettings(){
   settingsOpen=false;
   settingsNavIdx=-1;
+  document.querySelectorAll('#settings .nav-focus').forEach(el => el.classList.remove('nav-focus'));
   document.getElementById('settings').style.display='none';
   document.getElementById('settings-backdrop').style.display='none';
   document.getElementById('gear-btn').classList.remove('active');
